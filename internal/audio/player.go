@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -22,37 +21,37 @@ type SearchResult struct {
 }
 
 // Search finds a track using yt-dlp but does NOT download it.
-// It returns the title and the original query (which yt-dlp can use to download later).
+// It returns the title and the resolved webpage URL (which yt-dlp can use to extract media later).
 func Search(ctx context.Context, query string) (*SearchResult, error) {
 	isURL := strings.HasPrefix(query, "http://") || strings.HasPrefix(query, "https://")
 
 	if isURL {
 		// For direct URLs, just get the title
-		title, err := getTitle(ctx, query)
+		title, _, err := getTrackInfo(ctx, query)
 		if err != nil {
 			return nil, err
 		}
+		// If it's already a URL, just use it directly
 		return &SearchResult{Title: title, Query: query}, nil
 	}
 
 	// Try YouTube search first
-	title, err := getTitle(ctx, fmt.Sprintf("ytsearch:%s", query))
+	title, webpageURL, err := getTrackInfo(ctx, fmt.Sprintf("ytsearch:%s", query))
 	if err == nil {
-		// Use the same ytsearch query for download so yt-dlp resolves it again
-		return &SearchResult{Title: title, Query: fmt.Sprintf("ytsearch:%s", query)}, nil
+		return &SearchResult{Title: title, Query: webpageURL}, nil
 	}
 
 	// Fallback to SoundCloud
 	log.Printf("[AUDIO] YouTube search failed. Fallback to SoundCloud: %s", query)
-	title, err = getTitle(ctx, fmt.Sprintf("scsearch:%s", query))
+	title, webpageURL, err = getTrackInfo(ctx, fmt.Sprintf("scsearch:%s", query))
 	if err != nil {
 		return nil, fmt.Errorf("failed to find track on YouTube or SoundCloud: %w", err)
 	}
-	return &SearchResult{Title: title, Query: fmt.Sprintf("scsearch:%s", query)}, nil
+	return &SearchResult{Title: title, Query: webpageURL}, nil
 }
 
-// getTitle extracts just the title from yt-dlp without downloading.
-func getTitle(ctx context.Context, query string) (string, error) {
+// getTrackInfo extracts the title and webpage URL from yt-dlp without downloading.
+func getTrackInfo(ctx context.Context, query string) (title string, webpageURL string, err error) {
 	// Add a 15-second timeout for the search so it doesn't hang forever
 	searchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -60,7 +59,7 @@ func getTitle(ctx context.Context, query string) (string, error) {
 	cmd := exec.CommandContext(searchCtx, "yt-dlp",
 		"--force-ipv4",
 		"--no-download",
-		"--print", "%(title)s",
+		"--print", "%(title)s\n%(webpage_url)s",
 		"--no-warnings",
 		"--no-playlist",
 		query,
@@ -71,21 +70,32 @@ func getTitle(ctx context.Context, query string) (string, error) {
 		if errors.As(err, &exitErr) {
 			log.Printf("[AUDIO] yt-dlp search error: %s", string(exitErr.Stderr))
 		}
-		return "", err
+		return "", "", err
 	}
-	title := strings.TrimSpace(string(out))
-	if title == "" {
-		return "", fmt.Errorf("yt-dlp returned empty title")
+	
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) < 2 {
+		// Sometimes yt-dlp might only return title if webpage_url is missing
+		if len(lines) == 1 && lines[0] != "" {
+			return lines[0], query, nil
+		}
+		return "", "", fmt.Errorf("yt-dlp returned incomplete info")
 	}
-	return title, nil
+	
+	title = strings.TrimSpace(lines[0])
+	webpageURL = strings.TrimSpace(lines[1])
+	
+	if title == "" || webpageURL == "" {
+		return "", "", fmt.Errorf("yt-dlp returned empty title or URL")
+	}
+	return title, webpageURL, nil
 }
 
 // StreamProvider wraps a dca.EncodeSession to implement voice.OpusFrameProvider
 // and adds a Done channel to signal when the stream ends.
 type StreamProvider struct {
-	Session  *dca.EncodeSession
-	ytCmd    *exec.Cmd
-	done     chan error
+	Session   *dca.EncodeSession
+	done      chan error
 	closeOnce sync.Once
 }
 
@@ -108,9 +118,6 @@ func (p *StreamProvider) Close() {
 		if p.Session != nil {
 			p.Session.Cleanup()
 		}
-		if p.ytCmd != nil && p.ytCmd.Process != nil {
-			p.ytCmd.Process.Kill()
-		}
 	})
 }
 
@@ -119,67 +126,68 @@ func (p *StreamProvider) WaitDone() <-chan error {
 	return p.done
 }
 
-// NewStream creates a new audio stream by running yt-dlp to download
-// and pipe audio, then encoding it to Opus via dca/ffmpeg.
+// NewStream creates a new audio stream by extracting the direct media URL via yt-dlp,
+// then encoding it to Opus via dca/ffmpeg.
 // The query can be "ytsearch:...", "scsearch:...", or a direct URL.
 func NewStream(query string) (*StreamProvider, error) {
 	log.Printf("[AUDIO] Starting stream for: %s", query)
 
-	// Configure DCA encoding options for Discord
-	opts := *dca.StdEncodeOptions
-	opts.RawOutput = true    // raw Opus frames, no DCA container
-	opts.Bitrate = 96        // 96kbps audio
-	opts.Application = "audio"
-	opts.BufferedFrames = 200 // larger buffer for stability
+	// Step 1: Extract direct media URL using yt-dlp
+	// We use --get-url (-g) to get the actual streamable URL (e.g., googlevideo or sndcdn)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 
-	// Run yt-dlp: download best audio and pipe raw bytes to stdout
-	ytCmd := exec.Command("yt-dlp",
+	log.Println("[AUDIO] Extracting direct media URL...")
+	ytCmd := exec.CommandContext(ctx, "yt-dlp",
 		"--force-ipv4",
 		"-f", "bestaudio",
-		"-o", "-",          // output to stdout
-		"-q",               // quiet mode (no progress bar text into pipe)
+		"-g", // --get-url
 		"--no-warnings",
 		"--no-playlist",
 		query,
 	)
-	ytCmd.Stderr = os.Stderr // log yt-dlp errors to console
-
-	stdout, err := ytCmd.StdoutPipe()
+	
+	out, err := ytCmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create yt-dlp stdout pipe: %w", err)
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			log.Printf("[AUDIO] yt-dlp extraction error: %s", string(exitErr.Stderr))
+		}
+		return nil, fmt.Errorf("failed to extract direct URL: %w", err)
 	}
 
-	log.Println("[AUDIO] Starting yt-dlp process...")
-	if err := ytCmd.Start(); err != nil {
-		return nil, fmt.Errorf("failed to start yt-dlp: %w", err)
+	directURL := strings.TrimSpace(string(out))
+	if directURL == "" {
+		return nil, fmt.Errorf("yt-dlp returned empty direct URL")
 	}
 
-	// Give yt-dlp a moment to start producing data
-	// This helps avoid dca/ffmpeg getting an empty pipe
-	time.Sleep(2 * time.Second)
+	// Split in case yt-dlp returned multiple URLs (e.g. video and audio separate)
+	// We just want the last one which is usually audio
+	urls := strings.Split(directURL, "\n")
+	audioURL := strings.TrimSpace(urls[len(urls)-1])
+
+	log.Printf("[AUDIO] Direct URL extracted (length: %d)", len(audioURL))
+
+	// Configure DCA encoding options for Discord
+	opts := dca.StdEncodeOptions
+	opts.RawOutput = true    // raw Opus frames, no DCA container
+	opts.Bitrate = 96        // 96kbps audio
+	opts.Application = "audio"
+	opts.BufferedFrames = 200 // larger buffer for stability
+	
+	// Optional: add reconnect options for ffmpeg in case the stream drops
+	// opts.AudioFilter = "" // No filters
 
 	log.Println("[AUDIO] Starting DCA/ffmpeg encode session...")
-	encodeSession, err := dca.EncodeMem(stdout, &opts)
+	encodeSession, err := dca.EncodeFile(audioURL, opts)
 	if err != nil {
-		ytCmd.Process.Kill()
 		return nil, fmt.Errorf("failed to create dca encode session: %w", err)
 	}
 
 	provider := &StreamProvider{
 		Session: encodeSession,
-		ytCmd:   ytCmd,
 		done:    make(chan error, 1),
 	}
-
-	// Goroutine to clean up yt-dlp when it exits
-	go func() {
-		err := ytCmd.Wait()
-		if err != nil {
-			log.Printf("[AUDIO] yt-dlp process exited with: %v", err)
-		} else {
-			log.Println("[AUDIO] yt-dlp process finished successfully")
-		}
-	}()
 
 	log.Println("[AUDIO] Stream pipeline ready!")
 	return provider, nil
