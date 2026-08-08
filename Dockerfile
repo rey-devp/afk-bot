@@ -3,46 +3,65 @@ FROM golang:1.25-bookworm AS builder
 
 WORKDIR /app
 
-# Install all build dependencies for CGO + libdave
-RUN apt-get update && apt-get install -y \
-    gcc g++ cmake pkg-config git curl unzip bash build-essential ninja-build
+# Install minimal build dependencies for CGO linking
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ pkg-config curl unzip ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-# Clone godave and run the libdave install script
-RUN git clone https://github.com/disgoorg/godave /tmp/godave && \
-    chmod +x /tmp/godave/scripts/libdave_install.sh && \
-    NON_INTERACTIVE=1 /bin/bash /tmp/godave/scripts/libdave_install.sh v0.3.0
+# Download prebuilt libdave from Discord's official releases
+# (bypasses the broken cmake/vcpkg/boringssl build-from-source entirely)
+RUN LIBDAVE_URL="https://github.com/discord/libdave/releases/download/v1.1.0/cpp/libdave-Linux-X64-boringssl.zip" && \
+    curl -fsSL "$LIBDAVE_URL" -o /tmp/libdave.zip && \
+    mkdir -p /tmp/libdave && \
+    unzip -o /tmp/libdave.zip -d /tmp/libdave && \
+    mkdir -p /usr/local/lib /usr/local/include/dave && \
+    cp /tmp/libdave/lib/libdave.so /usr/local/lib/ && \
+    cp /tmp/libdave/include/dave/dave.h /usr/local/include/dave/ && \
+    ldconfig && \
+    rm -rf /tmp/libdave /tmp/libdave.zip
 
-# Point pkg-config to where libdave_install.sh places the .pc file
-ENV PKG_CONFIG_PATH="/root/.local/lib/pkgconfig"
-ENV LD_LIBRARY_PATH="/root/.local/lib"
+# Create pkg-config file so Go/CGO can find libdave
+RUN mkdir -p /usr/local/lib/pkgconfig && \
+    echo 'prefix=/usr/local'            >  /usr/local/lib/pkgconfig/dave.pc && \
+    echo 'libdir=${prefix}/lib'         >> /usr/local/lib/pkgconfig/dave.pc && \
+    echo 'includedir=${prefix}/include' >> /usr/local/lib/pkgconfig/dave.pc && \
+    echo ''                             >> /usr/local/lib/pkgconfig/dave.pc && \
+    echo 'Name: dave'                   >> /usr/local/lib/pkgconfig/dave.pc && \
+    echo 'Description: Discord DAVE E2EE library' >> /usr/local/lib/pkgconfig/dave.pc && \
+    echo 'Version: 1.1.0'              >> /usr/local/lib/pkgconfig/dave.pc && \
+    echo 'Libs: -L${libdir} -ldave'    >> /usr/local/lib/pkgconfig/dave.pc && \
+    echo 'Cflags: -I${includedir}'     >> /usr/local/lib/pkgconfig/dave.pc
 
-# Copy dependency files first for better caching
+ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig"
+ENV LD_LIBRARY_PATH="/usr/local/lib"
+
+# Copy dependency files first for better Docker layer caching
 COPY go.mod go.sum ./
 RUN go mod download
 
 # Copy the entire source code
 COPY . .
 
-# Build the application
+# Build the application with CGO enabled
 RUN CGO_ENABLED=1 GOOS=linux go build -o bot-afk ./cmd/bot
 
 # Stage 2: Minimal production image
 FROM debian:bookworm-slim
 
-# Install CA certificates and standard C++ runtime
-RUN apt-get update && apt-get install -y ca-certificates libstdc++6 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /root/
 
 # Copy the compiled binary
 COPY --from=builder /app/bot-afk .
 
-# Copy the libdave shared library from the builder
-COPY --from=builder /root/.local/lib/libdave.so /usr/local/lib/
-
-# Update linker cache and set LD_LIBRARY_PATH
-ENV LD_LIBRARY_PATH="/usr/local/lib"
+# Copy libdave shared library
+COPY --from=builder /usr/local/lib/libdave.so /usr/local/lib/
 RUN ldconfig
+
+ENV LD_LIBRARY_PATH="/usr/local/lib"
 
 EXPOSE 8080
 
