@@ -37,10 +37,10 @@ func executeYtDlp(ctx context.Context, query string, isURL bool, searchPrefix st
 	var cmd *exec.Cmd
 	// --force-ipv4 sometimes helps bypass IPv6 datacenter blocks on YouTube
 	if isURL {
-		cmd = exec.CommandContext(ctx, "yt-dlp", "--force-ipv4", "-f", "bestaudio", "-e", "-g", "--no-playlist", query)
+		cmd = exec.CommandContext(ctx, "yt-dlp", "--force-ipv4", "--print", "%(title)s\n%(webpage_url)s", "--no-warnings", "--no-playlist", query)
 	} else {
 		searchQuery := fmt.Sprintf("%s%s", searchPrefix, query)
-		cmd = exec.CommandContext(ctx, "yt-dlp", "--force-ipv4", "-f", "bestaudio", "-e", "-g", "--no-playlist", searchQuery)
+		cmd = exec.CommandContext(ctx, "yt-dlp", "--force-ipv4", "--print", "%(title)s\n%(webpage_url)s", "--no-warnings", "--no-playlist", searchQuery)
 	}
 
 	out, err := cmd.Output()
@@ -63,6 +63,7 @@ func executeYtDlp(ctx context.Context, query string, isURL bool, searchPrefix st
 type StreamProvider struct {
 	Session *dca.EncodeSession
 	Done    chan error
+	YtCmd   *exec.Cmd
 }
 
 func (p *StreamProvider) ProvideOpusFrame() ([]byte, error) {
@@ -78,25 +79,47 @@ func (p *StreamProvider) ProvideOpusFrame() ([]byte, error) {
 }
 
 func (p *StreamProvider) Close() {
+	if p.YtCmd != nil && p.YtCmd.Process != nil {
+		p.YtCmd.Process.Kill()
+	}
 	p.Session.Cleanup()
 }
 
 // NewOpusStream creates a new audio stream for Discord from a direct URL using DCA.
 func NewOpusStream(url string) (*StreamProvider, error) {
 	options := dca.StdEncodeOptions
-	options.RawOutput = true
-	options.Bitrate = 96
-	options.Application = "audio"
+	opts := *options
+	opts.RawOutput = true
+	opts.Bitrate = 96
+	opts.Application = "audio"
 
-	encodeSession, err := dca.EncodeFile(url, options)
+	// Run yt-dlp to download and pipe to stdout
+	ytCmd := exec.Command("yt-dlp", "--force-ipv4", "-f", "bestaudio", "-o", "-", url)
+	stdout, err := ytCmd.StdoutPipe()
 	if err != nil {
+		return nil, err
+	}
+
+	if err := ytCmd.Start(); err != nil {
+		return nil, err
+	}
+
+	encodeSession, err := dca.EncodeMem(stdout, &opts)
+	if err != nil {
+		ytCmd.Process.Kill()
 		return nil, err
 	}
 
 	provider := &StreamProvider{
 		Session: encodeSession,
 		Done:    make(chan error, 1),
+		YtCmd:   ytCmd,
 	}
 	
+	// Clean up yt-dlp zombie process when it finishes
+	go func() {
+		ytCmd.Wait()
+	}()
+
 	return provider, nil
 }

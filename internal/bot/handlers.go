@@ -131,6 +131,11 @@ func (b *Bot) handlePlayCommand(event *events.MessageCreate, content string) {
 		}
 
 		queue := b.GetQueue(*event.Message.GuildID)
+		
+		queue.mu.Lock()
+		wasPlaying := queue.isPlaying
+		queue.mu.Unlock()
+
 		queue.AddTrack(Track{
 			Title:       title,
 			URL:         url,
@@ -138,8 +143,12 @@ func (b *Bot) handlePlayCommand(event *events.MessageCreate, content string) {
 		})
 
 		if msg != nil {
+			statusMsg := "🎵 **Memutar:** " + title
+			if wasPlaying {
+				statusMsg = "🎵 **Ditambahkan ke antrean:** " + title
+			}
 			_, _ = b.Client.Rest.UpdateMessage(msg.ChannelID, msg.ID, discord.MessageUpdate{
-				Content: &[]string{"🎵 **Ditambahkan ke antrean:** " + title}[0],
+				Content: &[]string{statusMsg}[0],
 			})
 		}
 
