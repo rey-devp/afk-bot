@@ -21,7 +21,25 @@ type Bot struct {
 	Client         *disgobot.Client
 	Config         *config.Config
 	ActiveChannels map[snowflake.ID]snowflake.ID
+	Queues         map[snowflake.ID]*GuildQueue
 	mu             sync.RWMutex
+}
+
+// GetQueue returns the music queue for the given guild.
+func (b *Bot) GetQueue(guildID snowflake.ID) *GuildQueue {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	q, exists := b.Queues[guildID]
+	if !exists {
+		q = &GuildQueue{
+			GuildID: guildID,
+			Bot:     b,
+			Tracks:  []Track{},
+		}
+		b.Queues[guildID] = q
+	}
+	return q
 }
 
 // New creates and configures a new Bot instance.
@@ -29,6 +47,7 @@ func New(cfg *config.Config) *Bot {
 	b := &Bot{
 		Config:         cfg,
 		ActiveChannels: make(map[snowflake.ID]snowflake.ID),
+		Queues:         make(map[snowflake.ID]*GuildQueue),
 	}
 
 	client, err := disgo.New(cfg.BotToken,

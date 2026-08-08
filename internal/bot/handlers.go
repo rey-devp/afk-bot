@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"bot-afk/internal/audio"
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/events"
 	"github.com/disgoorg/snowflake/v2"
@@ -28,6 +29,12 @@ func (b *Bot) onMessageCreate(event *events.MessageCreate) {
 
 	if strings.HasPrefix(content, "!join") {
 		b.handleJoinCommand(event, content)
+	} else if strings.HasPrefix(content, "!play") {
+		b.handlePlayCommand(event, content)
+	} else if content == "!skip" {
+		b.handleSkipCommand(event)
+	} else if content == "!stop" {
+		b.handleStopCommand(event)
 	} else if content == "!leave" {
 		b.handleLeaveCommand(event)
 	} else if content == "!help" {
@@ -92,11 +99,96 @@ func (b *Bot) handleJoinCommand(event *events.MessageCreate, content string) {
 	})
 }
 
+// handlePlayCommand handles searching and queuing music.
+func (b *Bot) handlePlayCommand(event *events.MessageCreate, content string) {
+	if event.Message.GuildID == nil {
+		return
+	}
+
+	query := strings.TrimSpace(strings.TrimPrefix(content, "!play"))
+	if query == "" {
+		_, _ = b.Client.Rest.CreateMessage(event.ChannelID, discord.MessageCreate{
+			Content: "⚠️ Masukkan nama lagu atau URL! Contoh: `!play shape of you`",
+		})
+		return
+	}
+
+	// Tell the user we are searching
+	msg, _ := b.Client.Rest.CreateMessage(event.ChannelID, discord.MessageCreate{
+		Content: "🔍 Sedang mencari `" + query + "` di YouTube/Spotify...",
+	})
+	
+	// We run this in a goroutine because yt-dlp might take a few seconds
+	go func() {
+		title, url, err := audio.SearchAndExtract(context.Background(), query)
+		if err != nil {
+			if msg != nil {
+				_, _ = b.Client.Rest.UpdateMessage(msg.ChannelID, msg.ID, discord.MessageUpdate{
+					Content: &[]string{"⚠️ Gagal menemukan atau memutar lagu tersebut."}[0],
+				})
+			}
+			return
+		}
+
+		queue := b.GetQueue(*event.Message.GuildID)
+		queue.AddTrack(Track{
+			Title:       title,
+			URL:         url,
+			RequestedBy: event.Message.Author.ID,
+		})
+
+		if msg != nil {
+			_, _ = b.Client.Rest.UpdateMessage(msg.ChannelID, msg.ID, discord.MessageUpdate{
+				Content: &[]string{"🎵 **Ditambahkan ke antrean:** " + title}[0],
+			})
+		}
+
+		// Check if bot is in a voice channel
+		b.mu.RLock()
+		_, inVoice := b.ActiveChannels[*event.Message.GuildID]
+		b.mu.RUnlock()
+
+		if !inVoice {
+			// Try to join the user's voice channel automatically
+			b.handleJoinCommand(event, "!join")
+		}
+
+		queue.PlayNext()
+	}()
+}
+
+// handleSkipCommand skips the current track.
+func (b *Bot) handleSkipCommand(event *events.MessageCreate) {
+	if event.Message.GuildID == nil {
+		return
+	}
+	queue := b.GetQueue(*event.Message.GuildID)
+	queue.Skip()
+	_, _ = b.Client.Rest.CreateMessage(event.ChannelID, discord.MessageCreate{
+		Content: "⏭️ Lagu dilewati!",
+	})
+}
+
+// handleStopCommand stops playback and clears the queue.
+func (b *Bot) handleStopCommand(event *events.MessageCreate) {
+	if event.Message.GuildID == nil {
+		return
+	}
+	queue := b.GetQueue(*event.Message.GuildID)
+	queue.Stop()
+	_, _ = b.Client.Rest.CreateMessage(event.ChannelID, discord.MessageCreate{
+		Content: "🛑 Pemutaran dihentikan dan antrean dibersihkan.",
+	})
+}
+
 // handleLeaveCommand makes the bot leave the voice channel of the server.
 func (b *Bot) handleLeaveCommand(event *events.MessageCreate) {
 	if event.Message.GuildID == nil {
 		return
 	}
+
+	queue := b.GetQueue(*event.Message.GuildID)
+	queue.Stop()
 
 	b.mu.Lock()
 	delete(b.ActiveChannels, *event.Message.GuildID)
@@ -120,8 +212,11 @@ Saya adalah Bot yang tukang tidur, izinkan saya untuk tidur di voice kalian.
 
 **🛠️ Daftar Perintah & Cara Kerja:**
 > **!join [nama voice]** : Panggil aku agar masuk ke Voice Channel! Kamu bisa menyebutkan namanya secara spesifik (contoh: *!join Mabar*). Jika tidak, aku akan otomatis masuk ke channel tempat kamu berada.
+> **!play <nama/url>** : Memutar musik dari YouTube/Spotify. Aku akan otomatis masuk ke Voice jika belum ada di sana.
+> **!skip** : Melewati lagu yang sedang diputar.
+> **!stop** : Menghentikan musik dan membersihkan antrean lagu.
 > **!leave** : Ketik ini jika kamu bosan dan ingin mengusirku dari Voice Channel di server ini.
-> **!help**  : Menampilkan panduan tidurku (pesan ini).
+> **!help**  : Menampilkan panduan (pesan ini).
 
 *Catatan Rahasia: Aku punya kekuatan kebal AFK! Discord tidak akan bisa menendangku secara otomatis. Tapi kalau kalian nekat menendangku secara manual, aku akan langsung menerobos masuk lagi dalam 2 detik! (Kecuali kalian menggunakan !leave)* 😤`
 

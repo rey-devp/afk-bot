@@ -52,8 +52,11 @@ RUN CGO_ENABLED=1 GOOS=linux go build -o bot-afk ./cmd/bot
 FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libstdc++6 \
+    ca-certificates libstdc++6 ffmpeg curl python3 \
     && rm -rf /var/lib/apt/lists/*
+
+RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
+    chmod a+rx /usr/local/bin/yt-dlp
 
 WORKDIR /root/
 
