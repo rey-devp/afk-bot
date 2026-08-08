@@ -3,6 +3,7 @@ package config
 import (
 	"log"
 	"os"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -25,10 +26,15 @@ func Load() *Config {
 		port = "8080"
 	}
 
+	botToken := os.Getenv("BOT_TOKEN")
+	botToken = strings.TrimSpace(botToken)
+	botToken = strings.Trim(botToken, "\"") // Remove quotes if any
+	botToken = strings.TrimPrefix(botToken, "Bot ") // Remove Bot prefix if any
+
 	cfg := &Config{
-		BotToken:       os.Getenv("BOT_TOKEN"),
-		GuildID:        os.Getenv("GUILD_ID"),
-		VoiceChannelID: os.Getenv("VOICE_CHANNEL_ID"),
+		BotToken:       botToken,
+		GuildID:        strings.TrimSpace(os.Getenv("GUILD_ID")),
+		VoiceChannelID: strings.TrimSpace(os.Getenv("VOICE_CHANNEL_ID")),
 		Port:           port,
 	}
 
