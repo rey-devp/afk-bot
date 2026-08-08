@@ -65,7 +65,7 @@ func Search(ctx context.Context, query string) (*SearchResult, error) {
 	if err != nil || duration == "0:30" || duration == "00:30" || duration == "30" {
 		log.Printf("[AFK-BOT] [AUDIO] SoundCloud returned 30s preview or error (%v). Falling back to YouTube...", err)
 		
-		ytTitle, ytURL, ytDur, ytThumb, ytUploader, ytErr := getTrackInfo(ctx, fmt.Sprintf("ytmsearch:%s", query))
+		ytTitle, ytURL, ytDur, ytThumb, ytUploader, ytErr := getTrackInfo(ctx, fmt.Sprintf("ytsearch:%s", query))
 		if ytErr == nil {
 			return &SearchResult{
 				Title: ytTitle, Query: ytURL, Duration: ytDur, Thumbnail: ytThumb, Uploader: ytUploader,
@@ -96,7 +96,7 @@ func getTrackInfo(ctx context.Context, query string) (title, webpageURL, duratio
 	searchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(searchCtx, "yt-dlp",
+	args := []string{
 		"--force-ipv4",
 		"--no-download",
 		"--retries", "5",
@@ -104,8 +104,18 @@ func getTrackInfo(ctx context.Context, query string) (title, webpageURL, duratio
 		"--print", "%(title)s\n%(webpage_url)s\n%(duration_string)s\n%(thumbnail)s\n%(uploader)s",
 		"--no-warnings",
 		"--no-playlist",
-		query,
-	)
+	}
+
+	if _, err := os.Stat("www.youtube.com_cookies.txt"); err == nil {
+		args = append(args, "--cookies", "www.youtube.com_cookies.txt")
+		log.Printf("[AFK-BOT] [AUDIO] Using www.youtube.com_cookies.txt for search...")
+	} else if _, err := os.Stat("cookies.txt"); err == nil {
+		args = append(args, "--cookies", "cookies.txt")
+		log.Printf("[AFK-BOT] [AUDIO] Using cookies.txt for search...")
+	}
+
+	args = append(args, query)
+	cmd := exec.CommandContext(searchCtx, "yt-dlp", args...)
 	out, err := cmd.Output()
 	if err != nil {
 		var exitErr *exec.ExitError
@@ -207,16 +217,26 @@ func NewStream(query string) (*StreamProvider, error) {
 	// Step 1: Download the audio file using yt-dlp
 	tmpPrefix := filepath.Join(os.TempDir(), fmt.Sprintf("afk_audio_%d", time.Now().UnixNano()))
 
-	ytCmd := exec.Command("yt-dlp",
+	args := []string{
 		"--force-ipv4",
 		"-f", "bestaudio",
 		"--retries", "5",
 		"--fragment-retries", "5",
 		"--extractor-args", "youtube:player_client=tv,android,web",
-		"-o", tmpPrefix+".%(ext)s",
+		"-o", tmpPrefix + ".%(ext)s",
 		"--no-playlist",
-		query,
-	)
+	}
+
+	if _, err := os.Stat("www.youtube.com_cookies.txt"); err == nil {
+		args = append(args, "--cookies", "www.youtube.com_cookies.txt")
+		log.Printf("[AFK-BOT] [AUDIO] Using www.youtube.com_cookies.txt for download...")
+	} else if _, err := os.Stat("cookies.txt"); err == nil {
+		args = append(args, "--cookies", "cookies.txt")
+		log.Printf("[AFK-BOT] [AUDIO] Using cookies.txt for download...")
+	}
+
+	args = append(args, query)
+	ytCmd := exec.Command("yt-dlp", args...)
 
 	log.Println("[AFK-BOT] [AUDIO] Downloading audio file...")
 	out, err := ytCmd.CombinedOutput()

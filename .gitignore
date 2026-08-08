@@ -9,3 +9,6 @@ test-build
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Sensitive files
+*cookies.txt
