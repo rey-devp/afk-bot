@@ -33,7 +33,7 @@ func New(cfg *config.Config) *Bot {
 		GuildID: guildID,
 	}
 
-	client, err := disgo.New("Bot "+cfg.BotToken,
+	client, err := disgo.New(cfg.BotToken,
 		disgobot.WithGatewayConfigOpts(
 			gateway.WithIntents(
 				gateway.IntentGuildVoiceStates,
