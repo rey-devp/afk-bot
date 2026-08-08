@@ -32,9 +32,6 @@ func Search(ctx context.Context, query string) (*SearchResult, error) {
 		// For direct URLs, just get the title
 		title, _, duration, thumb, uploader, err := getTrackInfo(ctx, query)
 		if err != nil {
-			if strings.Contains(query, "youtube.com") || strings.Contains(query, "youtu.be") {
-				return nil, fmt.Errorf("YOUTUBE_BLOCKED")
-			}
 			return nil, err
 		}
 		return &SearchResult{
@@ -42,19 +39,11 @@ func Search(ctx context.Context, query string) (*SearchResult, error) {
 		}, nil
 	}
 
-	// Try YouTube search first
-	title, webpageURL, duration, thumb, uploader, err := getTrackInfo(ctx, fmt.Sprintf("ytsearch:%s", query))
-	if err == nil {
-		return &SearchResult{
-			Title: title, Query: webpageURL, Duration: duration, Thumbnail: thumb, Uploader: uploader,
-		}, nil
-	}
-
-	// Fallback to SoundCloud
-	log.Printf("[AUDIO] YouTube search failed. Fallback to SoundCloud: %s", query)
-	title, webpageURL, duration, thumb, uploader, err = getTrackInfo(ctx, fmt.Sprintf("scsearch:%s", query))
+	// Always use SoundCloud search to avoid YouTube bot restrictions
+	log.Printf("[AUDIO] Searching SoundCloud: %s", query)
+	title, webpageURL, duration, thumb, uploader, err := getTrackInfo(ctx, fmt.Sprintf("scsearch:%s", query))
 	if err != nil {
-		return nil, fmt.Errorf("failed to find track on YouTube or SoundCloud: %w", err)
+		return nil, fmt.Errorf("failed to find track on SoundCloud: %w", err)
 	}
 	return &SearchResult{
 		Title: title, Query: webpageURL, Duration: duration, Thumbnail: thumb, Uploader: uploader,
@@ -121,26 +110,42 @@ type StreamProvider struct {
 	filePath  string // temporary downloaded file to clean up
 	done      chan error
 	closeOnce sync.Once
+	
+	packetBuf [][]byte // buffer for packets inside a single OGG page
 }
 
 // ProvideOpusFrame reads the next opus frame from the ffmpeg ogg/opus output.
-// ffmpeg outputs OGG/Opus format. We parse OGG pages to extract raw opus packets.
-// BUT it is simpler and more reliable to let ffmpeg output raw s16le PCM,
-// then use a Go opus encoder.
-//
-// However, since we don't have a Go opus encoder in our dependencies, we use
-// ffmpeg to output opus in an OGG container, then read opus packets from OGG pages.
 func (p *StreamProvider) ProvideOpusFrame() ([]byte, error) {
-	// Read raw opus packets from our custom reader
-	frame, err := readNextOpusPacket(p.stdout)
-	if err != nil {
-		select {
-		case p.done <- err:
-		default:
-		}
-		return nil, err
+	// If we have buffered packets, return the next one
+	if len(p.packetBuf) > 0 {
+		pkt := p.packetBuf[0]
+		p.packetBuf = p.packetBuf[1:]
+		return pkt, nil
 	}
-	return frame, nil
+
+	// Buffer is empty, read the next OGG page
+	for {
+		page, err := readOggPage(p.stdout)
+		if err != nil {
+			select {
+			case p.done <- err:
+			default:
+			}
+			return nil, err
+		}
+
+		if page.isHeader || len(page.packets) == 0 {
+			continue // Skip headers or empty pages
+		}
+
+		// Fill the buffer
+		p.packetBuf = page.packets
+		
+		// Pop the first packet
+		pkt := p.packetBuf[0]
+		p.packetBuf = p.packetBuf[1:]
+		return pkt, nil
+	}
 }
 
 func (p *StreamProvider) Close() {
@@ -268,32 +273,8 @@ func NewStream(query string) (*StreamProvider, error) {
 	return provider, nil
 }
 
-// ---- OGG/Opus packet reader ----
 // This reads raw Opus packets from an OGG container stream.
 // OGG pages have a specific structure: "OggS" magic, then header fields, then segments.
-
-func readNextOpusPacket(r io.Reader) ([]byte, error) {
-	for {
-		page, err := readOggPage(r)
-		if err != nil {
-			return nil, err
-		}
-
-		// OGG pages can contain multiple segments that form packets.
-		// For Opus, each packet is typically one OGG page.
-		// Skip the first two pages (OpusHead and OpusTags headers).
-		if page.isHeader {
-			continue
-		}
-
-		// Return the first audio packet from this page
-		for _, pkt := range page.packets {
-			if len(pkt) > 0 {
-				return pkt, nil
-			}
-		}
-	}
-}
 
 type oggPage struct {
 	isHeader bool
