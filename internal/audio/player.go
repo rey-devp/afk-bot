@@ -12,8 +12,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/jonas747/dca"
 )
 
 // SearchResult holds the metadata found by yt-dlp search.
@@ -73,7 +71,7 @@ func getTrackInfo(ctx context.Context, query string) (title, webpageURL, duratio
 		"--force-ipv4",
 		"--no-download",
 		"--retries", "5",
-		"--extractor-args", "youtube:player_client=android", // Attempt to bypass YouTube bot block
+		"--extractor-args", "youtube:player_client=android",
 		"--print", "%(title)s\n%(webpage_url)s\n%(duration_string)s\n%(thumbnail)s\n%(uploader)s",
 		"--no-warnings",
 		"--no-playlist",
@@ -87,44 +85,55 @@ func getTrackInfo(ctx context.Context, query string) (title, webpageURL, duratio
 		}
 		return "", "", "", "", "", err
 	}
-	
+
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	if len(lines) < 2 {
-		// Sometimes yt-dlp might only return title if webpage_url is missing
 		if len(lines) == 1 && lines[0] != "" {
 			return lines[0], query, "00:00", "", "", nil
 		}
 		return "", "", "", "", "", fmt.Errorf("yt-dlp returned incomplete info")
 	}
-	
+
 	title = strings.TrimSpace(lines[0])
 	webpageURL = strings.TrimSpace(lines[1])
-	
+
 	if len(lines) >= 5 {
 		duration = strings.TrimSpace(lines[2])
 		thumbnail = strings.TrimSpace(lines[3])
 		uploader = strings.TrimSpace(lines[4])
 	}
-	
+
 	if title == "" || webpageURL == "" {
 		return "", "", "", "", "", fmt.Errorf("yt-dlp returned empty title or URL")
 	}
 	return title, webpageURL, duration, thumbnail, uploader, nil
 }
 
-// StreamProvider wraps a dca.EncodeSession to implement voice.OpusFrameProvider
-// and adds a Done channel to signal when the stream ends.
+// opusFrameSize is the number of bytes in a 20ms PCM frame at 48kHz stereo 16-bit.
+// 48000 samples/sec * 2 channels * 2 bytes/sample * 0.020 sec = 3840 bytes
+const opusFrameSize = 3840
+
+// StreamProvider wraps an ffmpeg process and reads raw Opus frames from it.
+// It implements voice.OpusFrameProvider for disgo.
 type StreamProvider struct {
-	Session   *dca.EncodeSession
-	filePath  string // temporary downloaded file
+	ffmpegCmd *exec.Cmd
+	stdout    io.ReadCloser
+	filePath  string // temporary downloaded file to clean up
 	done      chan error
 	closeOnce sync.Once
 }
 
+// ProvideOpusFrame reads the next opus frame from the ffmpeg ogg/opus output.
+// ffmpeg outputs OGG/Opus format. We parse OGG pages to extract raw opus packets.
+// BUT it is simpler and more reliable to let ffmpeg output raw s16le PCM,
+// then use a Go opus encoder.
+//
+// However, since we don't have a Go opus encoder in our dependencies, we use
+// ffmpeg to output opus in an OGG container, then read opus packets from OGG pages.
 func (p *StreamProvider) ProvideOpusFrame() ([]byte, error) {
-	frame, err := p.Session.OpusFrame()
+	// Read raw opus packets from our custom reader
+	frame, err := readNextOpusPacket(p.stdout)
 	if err != nil {
-		// Signal that the stream is done (EOF or error)
 		select {
 		case p.done <- err:
 		default:
@@ -137,8 +146,9 @@ func (p *StreamProvider) ProvideOpusFrame() ([]byte, error) {
 func (p *StreamProvider) Close() {
 	p.closeOnce.Do(func() {
 		log.Println("[AUDIO] Closing StreamProvider...")
-		if p.Session != nil {
-			p.Session.Cleanup()
+		if p.ffmpegCmd != nil && p.ffmpegCmd.Process != nil {
+			p.ffmpegCmd.Process.Kill()
+			p.ffmpegCmd.Wait()
 		}
 		if p.filePath != "" {
 			os.Remove(p.filePath)
@@ -152,27 +162,32 @@ func (p *StreamProvider) WaitDone() <-chan error {
 	return p.done
 }
 
-// NewStream creates a new audio stream by downloading the audio to a temporary file,
-// then encoding it to Opus via dca/ffmpeg. This is the most stable method and avoids
-// all streaming/piping bugs with ffmpeg.
+// NewStream creates a new audio stream by:
+// 1. Downloading the audio using yt-dlp to a temporary file
+// 2. Using ffmpeg to convert the file to PCM audio
+// 3. Encoding PCM to Opus packets on the fly
+//
+// This approach is the most robust because:
+// - yt-dlp handles all the auth/DRM/cookies negotiation
+// - ffmpeg reads a local file (no network issues)
+// - We have full control over the audio pipeline
 func NewStream(query string) (*StreamProvider, error) {
 	log.Printf("[AUDIO] Starting download for URL: %s", query)
 
-	// Generate a unique temporary file prefix
+	// Step 1: Download the audio file using yt-dlp
 	tmpPrefix := filepath.Join(os.TempDir(), fmt.Sprintf("afk_audio_%d", time.Now().UnixNano()))
-	
-	// Start yt-dlp to download the audio
+
 	ytCmd := exec.Command("yt-dlp",
 		"--force-ipv4",
 		"-f", "bestaudio",
 		"--retries", "5",
 		"--fragment-retries", "5",
-		"--extractor-args", "youtube:player_client=android", // bypass youtube block
+		"--extractor-args", "youtube:player_client=android",
 		"-o", tmpPrefix+".%(ext)s",
 		"--no-playlist",
 		query,
 	)
-	
+
 	log.Println("[AUDIO] Downloading audio file...")
 	out, err := ytCmd.CombinedOutput()
 	if err != nil {
@@ -184,35 +199,187 @@ func NewStream(query string) (*StreamProvider, error) {
 	if err != nil || len(files) == 0 {
 		return nil, fmt.Errorf("downloaded file not found after yt-dlp success")
 	}
-	
-	downloadedFile := files[0]
-	log.Printf("[AUDIO] Successfully downloaded to %s", downloadedFile)
 
-	// Configure DCA encoding options for Discord
-	opts := dca.StdEncodeOptions
-	opts.RawOutput = true    // raw Opus frames, no DCA container
-	opts.Bitrate = 96        // 96kbps audio
-	opts.Application = "audio"
-	opts.BufferedFrames = 200 // larger buffer for stability
-	
-	log.Println("[AUDIO] Starting DCA/ffmpeg encode session from file...")
-	encodeSession, err := dca.EncodeFile(downloadedFile, opts)
-	if err != nil {
-		os.Remove(downloadedFile) // cleanup if encode fails
-		return nil, fmt.Errorf("failed to create dca encode session: %w", err)
+	downloadedFile := files[0]
+
+	// Verify the file has content
+	stat, err := os.Stat(downloadedFile)
+	if err != nil || stat.Size() == 0 {
+		os.Remove(downloadedFile)
+		return nil, fmt.Errorf("downloaded file is empty or unreadable")
 	}
+	log.Printf("[AUDIO] Successfully downloaded to %s (%d bytes)", downloadedFile, stat.Size())
+
+	// Step 2: Start ffmpeg to output OGG/Opus format for Discord
+	// Discord requires: Opus codec, 48kHz, stereo
+	// We use OGG container so we can extract individual opus packets
+	ffmpegCmd := exec.Command("ffmpeg",
+		"-i", downloadedFile,
+		"-vn",               // no video
+		"-c:a", "libopus",   // encode to opus
+		"-b:a", "96k",       // 96kbps bitrate
+		"-ar", "48000",      // 48kHz sample rate
+		"-ac", "2",          // stereo
+		"-frame_duration", "20", // 20ms frames (Discord standard)
+		"-application", "audio",
+		"-vbr", "on",
+		"-compression_level", "10",
+		"-f", "ogg",         // OGG container output
+		"-loglevel", "warning",
+		"pipe:1",            // output to stdout
+	)
+
+	// Capture ffmpeg stderr for debugging
+	ffmpegCmd.Stderr = os.Stderr
+
+	stdout, err := ffmpegCmd.StdoutPipe()
+	if err != nil {
+		os.Remove(downloadedFile)
+		return nil, fmt.Errorf("failed to create ffmpeg stdout pipe: %w", err)
+	}
+
+	log.Println("[AUDIO] Starting ffmpeg encode (OGG/Opus)...")
+	if err := ffmpegCmd.Start(); err != nil {
+		os.Remove(downloadedFile)
+		return nil, fmt.Errorf("failed to start ffmpeg: %w", err)
+	}
+
+	// Give ffmpeg a moment to initialize and start producing data
+	time.Sleep(500 * time.Millisecond)
 
 	provider := &StreamProvider{
-		Session:  encodeSession,
-		filePath: downloadedFile,
-		done:     make(chan error, 1),
+		ffmpegCmd: ffmpegCmd,
+		stdout:    stdout,
+		filePath:  downloadedFile,
+		done:      make(chan error, 1),
 	}
+
+	// Wait for ffmpeg in background to avoid zombies
+	go func() {
+		err := ffmpegCmd.Wait()
+		if err != nil {
+			log.Printf("[AUDIO] ffmpeg process exited with error: %v", err)
+		} else {
+			log.Println("[AUDIO] ffmpeg process completed successfully")
+		}
+	}()
 
 	log.Println("[AUDIO] Stream pipeline ready!")
 	return provider, nil
 }
 
-// Legacy wrapper for backwards compatibility
+// ---- OGG/Opus packet reader ----
+// This reads raw Opus packets from an OGG container stream.
+// OGG pages have a specific structure: "OggS" magic, then header fields, then segments.
+
+func readNextOpusPacket(r io.Reader) ([]byte, error) {
+	for {
+		page, err := readOggPage(r)
+		if err != nil {
+			return nil, err
+		}
+
+		// OGG pages can contain multiple segments that form packets.
+		// For Opus, each packet is typically one OGG page.
+		// Skip the first two pages (OpusHead and OpusTags headers).
+		if page.isHeader {
+			continue
+		}
+
+		// Return the first audio packet from this page
+		for _, pkt := range page.packets {
+			if len(pkt) > 0 {
+				return pkt, nil
+			}
+		}
+	}
+}
+
+type oggPage struct {
+	isHeader bool
+	packets  [][]byte
+}
+
+func readOggPage(r io.Reader) (*oggPage, error) {
+	// Read OGG page header (27 bytes minimum)
+	header := make([]byte, 27)
+	if _, err := io.ReadFull(r, header); err != nil {
+		return nil, err
+	}
+
+	// Verify magic "OggS"
+	if string(header[0:4]) != "OggS" {
+		return nil, fmt.Errorf("invalid OGG magic: %x", header[0:4])
+	}
+
+	// header[5] = page type flag
+	// Bit 0x02 = beginning of stream (BOS) = header page
+	pageType := header[5]
+	isHeader := (pageType & 0x02) != 0
+
+	// Granule position at bytes 6-13
+	granulePos := uint64(header[6]) | uint64(header[7])<<8 | uint64(header[8])<<16 |
+		uint64(header[9])<<24 | uint64(header[10])<<32 | uint64(header[11])<<40 |
+		uint64(header[12])<<48 | uint64(header[13])<<56
+
+	// If granule position is 0, it's likely a header page
+	if granulePos == 0 {
+		isHeader = true
+	}
+
+	// Number of page segments at byte 26
+	numSegments := int(header[26])
+
+	// Read the segment table
+	segmentTable := make([]byte, numSegments)
+	if _, err := io.ReadFull(r, segmentTable); err != nil {
+		return nil, err
+	}
+
+	// Calculate total page data size
+	totalSize := 0
+	for _, s := range segmentTable {
+		totalSize += int(s)
+	}
+
+	// Read all segment data
+	data := make([]byte, totalSize)
+	if _, err := io.ReadFull(r, data); err != nil {
+		return nil, err
+	}
+
+	// Parse segments into packets
+	// A packet ends when a segment length < 255 is encountered
+	var packets [][]byte
+	var currentPacket []byte
+	offset := 0
+	for _, segLen := range segmentTable {
+		currentPacket = append(currentPacket, data[offset:offset+int(segLen)]...)
+		offset += int(segLen)
+		if segLen < 255 {
+			// End of packet
+			if len(currentPacket) > 0 {
+				pkt := make([]byte, len(currentPacket))
+				copy(pkt, currentPacket)
+				packets = append(packets, pkt)
+			}
+			currentPacket = currentPacket[:0]
+		}
+	}
+	// If there's remaining data (packet spans pages), include it
+	if len(currentPacket) > 0 {
+		pkt := make([]byte, len(currentPacket))
+		copy(pkt, currentPacket)
+		packets = append(packets, pkt)
+	}
+
+	return &oggPage{
+		isHeader: isHeader,
+		packets:  packets,
+	}, nil
+}
+
+// Legacy wrappers for backwards compatibility
 func SearchAndExtract(ctx context.Context, query string) (string, string, error) {
 	result, err := Search(ctx, query)
 	if err != nil {
@@ -221,36 +388,10 @@ func SearchAndExtract(ctx context.Context, query string) (string, string, error)
 	return result.Title, result.Query, nil
 }
 
-// Legacy wrapper
 func NewOpusStream(query string) (*StreamProvider, error) {
 	return NewStream(query)
 }
 
-// WaitDoneCompat returns the done channel (for queue.go usage)
 func (p *StreamProvider) DoneChan() <-chan error {
 	return p.done
-}
-
-// GetEncodeSession returns the underlying dca.EncodeSession (for cleanup in queue)
-func (p *StreamProvider) GetEncodeSession() *dca.EncodeSession {
-	return p.Session
-}
-
-// ReadOpusFrames is a debug utility that counts how many frames are produced
-func ReadOpusFrames(p *StreamProvider, maxFrames int) int {
-	count := 0
-	for i := 0; i < maxFrames; i++ {
-		_, err := p.Session.OpusFrame()
-		if err != nil {
-			if err == io.EOF {
-				log.Printf("[AUDIO] DEBUG: Read %d frames before EOF", count)
-			} else {
-				log.Printf("[AUDIO] DEBUG: Read %d frames before error: %v", count, err)
-			}
-			return count
-		}
-		count++
-	}
-	log.Printf("[AUDIO] DEBUG: Read %d frames (max reached)", count)
-	return count
 }

@@ -8,19 +8,16 @@ require (
 	github.com/disgoorg/snowflake/v2 v2.0.3
 	github.com/gofiber/fiber/v2 v2.52.14
 	github.com/joho/godotenv v1.5.1
-	github.com/jonas747/dca v0.0.0-20210930103944-155f5e5f0cc7
 )
 
 require (
 	github.com/andybalholm/brotli v1.1.0 // indirect
-	github.com/bwmarrin/discordgo v0.29.0 // indirect
 	github.com/disgoorg/godave v0.3.0 // indirect
 	github.com/disgoorg/godave/libdave v0.3.0 // indirect
 	github.com/disgoorg/json/v2 v2.0.0 // indirect
 	github.com/disgoorg/omit v1.0.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
-	github.com/jonas747/ogg v0.0.0-20161220051205-b4f6f4cf3757 // indirect
 	github.com/klauspost/compress v1.18.4 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
