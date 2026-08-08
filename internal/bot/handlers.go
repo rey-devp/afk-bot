@@ -83,7 +83,7 @@ func (b *Bot) handleLeaveCommand(event *events.MessageCreate) {
 // handleHelpCommand sends a help message to introduce the bot and list its commands.
 func (b *Bot) handleHelpCommand(event *events.MessageCreate) {
 	helpText := `**Halo!** 💤
-Saya adalah Bot yang tukang tidur, izinkan saya untuk tidur di voice kalian. Panggil aku dengan ketik **!join** biar aku bisa nemenin kamu sambil tidur, mau nge kick aku? cukup ketik **!leave** maka aku akan pergi dengan sakit hati. 💔
+Saya adalah Bot yang tukang tidur, izinkan saya untuk tidur di voice kalian.
 
 **🛠️ Daftar Perintah & Cara Kerja:**
 > **!join**  : Pastikan kamu sudah berada di dalam Voice Channel. Ketik ini agar aku ikut masuk dan tertidur di sana selamanya (24/7).
