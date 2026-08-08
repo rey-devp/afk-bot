@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y \
 # Clone godave and run the libdave install script
 RUN git clone https://github.com/disgoorg/godave /tmp/godave && \
     chmod +x /tmp/godave/scripts/libdave_install.sh && \
-    NON_INTERACTIVE=1 /bin/bash /tmp/godave/scripts/libdave_install.sh
+    NON_INTERACTIVE=1 /bin/bash /tmp/godave/scripts/libdave_install.sh v0.3.0
 
 # Point pkg-config to where libdave_install.sh places the .pc file
 ENV PKG_CONFIG_PATH="/root/.local/lib/pkgconfig"
