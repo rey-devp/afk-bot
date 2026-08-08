@@ -1,37 +1,32 @@
 # Stage 1: Build the Go binary
 FROM golang:1.22-alpine AS builder
 
-# Set the working directory inside the container
 WORKDIR /app
 
 # Install build dependencies for CGO (godave / DAVE E2EE protocol)
 RUN apk add --no-cache gcc g++ musl-dev linux-headers
 
-# Copy the go.mod and go.sum files
-COPY go.mod go.sum* ./
-
-# Download all dependencies
+# Copy dependency files first for better caching
+COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy the source code into the container
+# Copy the entire source code
 COPY . .
 
-# Build the Go app with CGO_ENABLED=1
-RUN CGO_ENABLED=1 GOOS=linux go build -o bot-afk .
+# Build the application from cmd/bot
+RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o bot-afk ./cmd/bot
 
-# Stage 2: Create a minimal image for production
+# Stage 2: Minimal production image
 FROM alpine:latest
 
-# Install CA certificates and standard C++ libraries required by godave
+# Install CA certificates and C++ runtime required by godave
 RUN apk --no-cache add ca-certificates libstdc++
 
 WORKDIR /root/
 
-# Copy the pre-built binary file from the previous stage
+# Copy the compiled binary
 COPY --from=builder /app/bot-afk .
 
-# Expose port 8080 to the outside world for the health check HTTP server
 EXPOSE 8080
 
-# Command to run the executable
 CMD ["./bot-afk"]
