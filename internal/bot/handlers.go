@@ -7,7 +7,6 @@ import (
 
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/events"
-	"github.com/disgoorg/snowflake/v2"
 )
 
 // onReady is called when the bot successfully connects to Discord.
@@ -80,9 +79,9 @@ func (b *Bot) handleLeaveCommand(event *events.MessageCreate) {
 }
 
 // onVoiceStateUpdate handles voice state changes, especially to automatically rejoin if kicked.
-func (b *Bot) onVoiceStateUpdate(event *events.VoiceStateUpdate) {
+func (b *Bot) onVoiceStateUpdate(event *events.GuildVoiceStateUpdate) {
 	// Only care about our own voice state
-	if event.VoiceState.UserID != b.Client.ApplicationID() {
+	if event.VoiceState.UserID != b.Client.ApplicationID {
 		return
 	}
 
