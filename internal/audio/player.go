@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -12,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jonas747/dca"
 )
 
 // SearchResult holds the metadata found by yt-dlp search.
@@ -105,55 +106,30 @@ const opusFrameSize = 3840
 // StreamProvider wraps an ffmpeg process and reads raw Opus frames from it.
 // It implements voice.OpusFrameProvider for disgo.
 type StreamProvider struct {
-	ffmpegCmd *exec.Cmd
-	stdout    io.ReadCloser
+	session   *dca.EncodeSession
 	filePath  string // temporary downloaded file to clean up
 	done      chan error
 	closeOnce sync.Once
-	
-	packetBuf [][]byte // buffer for packets inside a single OGG page
 }
 
-// ProvideOpusFrame reads the next opus frame from the ffmpeg ogg/opus output.
+// ProvideOpusFrame reads the next opus frame.
 func (p *StreamProvider) ProvideOpusFrame() ([]byte, error) {
-	// If we have buffered packets, return the next one
-	if len(p.packetBuf) > 0 {
-		pkt := p.packetBuf[0]
-		p.packetBuf = p.packetBuf[1:]
-		return pkt, nil
-	}
-
-	// Buffer is empty, read the next OGG page
-	for {
-		page, err := readOggPage(p.stdout)
-		if err != nil {
-			select {
-			case p.done <- err:
-			default:
-			}
-			return nil, err
+	frame, err := p.session.OpusFrame()
+	if err != nil {
+		select {
+		case p.done <- err:
+		default:
 		}
-
-		if page.isHeader || len(page.packets) == 0 {
-			continue // Skip headers or empty pages
-		}
-
-		// Fill the buffer
-		p.packetBuf = page.packets
-		
-		// Pop the first packet
-		pkt := p.packetBuf[0]
-		p.packetBuf = p.packetBuf[1:]
-		return pkt, nil
+		return nil, err
 	}
+	return frame, nil
 }
 
 func (p *StreamProvider) Close() {
 	p.closeOnce.Do(func() {
 		log.Println("[AUDIO] Closing StreamProvider...")
-		if p.ffmpegCmd != nil && p.ffmpegCmd.Process != nil {
-			p.ffmpegCmd.Process.Kill()
-			p.ffmpegCmd.Wait()
+		if p.session != nil {
+			p.session.Cleanup()
 		}
 		if p.filePath != "" {
 			os.Remove(p.filePath)
@@ -169,13 +145,7 @@ func (p *StreamProvider) WaitDone() <-chan error {
 
 // NewStream creates a new audio stream by:
 // 1. Downloading the audio using yt-dlp to a temporary file
-// 2. Using ffmpeg to convert the file to PCM audio
-// 3. Encoding PCM to Opus packets on the fly
-//
-// This approach is the most robust because:
-// - yt-dlp handles all the auth/DRM/cookies negotiation
-// - ffmpeg reads a local file (no network issues)
-// - We have full control over the audio pipeline
+// 2. Using dca to accurately encode the file to Opus frames
 func NewStream(query string) (*StreamProvider, error) {
 	log.Printf("[AUDIO] Starting download for URL: %s", query)
 
@@ -215,150 +185,31 @@ func NewStream(query string) (*StreamProvider, error) {
 	}
 	log.Printf("[AUDIO] Successfully downloaded to %s (%d bytes)", downloadedFile, stat.Size())
 
-	// Step 2: Start ffmpeg to output OGG/Opus format for Discord
-	// Discord requires: Opus codec, 48kHz, stereo
-	// We use OGG container so we can extract individual opus packets
-	ffmpegCmd := exec.Command("ffmpeg",
-		"-i", downloadedFile,
-		"-vn",               // no video
-		"-c:a", "libopus",   // encode to opus
-		"-b:a", "96k",       // 96kbps bitrate
-		"-ar", "48000",      // 48kHz sample rate
-		"-ac", "2",          // stereo
-		"-frame_duration", "20", // 20ms frames (Discord standard)
-		"-application", "audio",
-		"-vbr", "on",
-		"-compression_level", "10",
-		"-f", "ogg",         // OGG container output
-		"-loglevel", "warning",
-		"pipe:1",            // output to stdout
-	)
+	// Step 2: Start dca encoding
+	log.Println("[AUDIO] Starting dca encode (Opus)...")
+	opts := dca.StdEncodeOptions
+	opts.RawOutput = true
+	opts.Bitrate = 96
+	opts.Application = dca.AudioApplicationAudio
+	opts.VBR = true
 
-	// Capture ffmpeg stderr for debugging
-	ffmpegCmd.Stderr = os.Stderr
-
-	stdout, err := ffmpegCmd.StdoutPipe()
+	encodeSession, err := dca.EncodeFile(downloadedFile, opts)
 	if err != nil {
 		os.Remove(downloadedFile)
-		return nil, fmt.Errorf("failed to create ffmpeg stdout pipe: %w", err)
+		return nil, fmt.Errorf("failed to start dca encode: %w", err)
 	}
-
-	log.Println("[AUDIO] Starting ffmpeg encode (OGG/Opus)...")
-	if err := ffmpegCmd.Start(); err != nil {
-		os.Remove(downloadedFile)
-		return nil, fmt.Errorf("failed to start ffmpeg: %w", err)
-	}
-
-	// Give ffmpeg a moment to initialize and start producing data
-	time.Sleep(500 * time.Millisecond)
 
 	provider := &StreamProvider{
-		ffmpegCmd: ffmpegCmd,
-		stdout:    stdout,
+		session:   encodeSession,
 		filePath:  downloadedFile,
 		done:      make(chan error, 1),
 	}
-
-	// Wait for ffmpeg in background to avoid zombies
-	go func() {
-		err := ffmpegCmd.Wait()
-		if err != nil {
-			log.Printf("[AUDIO] ffmpeg process exited with error: %v", err)
-		} else {
-			log.Println("[AUDIO] ffmpeg process completed successfully")
-		}
-	}()
 
 	log.Println("[AUDIO] Stream pipeline ready!")
 	return provider, nil
 }
 
-// This reads raw Opus packets from an OGG container stream.
-// OGG pages have a specific structure: "OggS" magic, then header fields, then segments.
 
-type oggPage struct {
-	isHeader bool
-	packets  [][]byte
-}
-
-func readOggPage(r io.Reader) (*oggPage, error) {
-	// Read OGG page header (27 bytes minimum)
-	header := make([]byte, 27)
-	if _, err := io.ReadFull(r, header); err != nil {
-		return nil, err
-	}
-
-	// Verify magic "OggS"
-	if string(header[0:4]) != "OggS" {
-		return nil, fmt.Errorf("invalid OGG magic: %x", header[0:4])
-	}
-
-	// header[5] = page type flag
-	// Bit 0x02 = beginning of stream (BOS) = header page
-	pageType := header[5]
-	isHeader := (pageType & 0x02) != 0
-
-	// Granule position at bytes 6-13
-	granulePos := uint64(header[6]) | uint64(header[7])<<8 | uint64(header[8])<<16 |
-		uint64(header[9])<<24 | uint64(header[10])<<32 | uint64(header[11])<<40 |
-		uint64(header[12])<<48 | uint64(header[13])<<56
-
-	// If granule position is 0, it's likely a header page
-	if granulePos == 0 {
-		isHeader = true
-	}
-
-	// Number of page segments at byte 26
-	numSegments := int(header[26])
-
-	// Read the segment table
-	segmentTable := make([]byte, numSegments)
-	if _, err := io.ReadFull(r, segmentTable); err != nil {
-		return nil, err
-	}
-
-	// Calculate total page data size
-	totalSize := 0
-	for _, s := range segmentTable {
-		totalSize += int(s)
-	}
-
-	// Read all segment data
-	data := make([]byte, totalSize)
-	if _, err := io.ReadFull(r, data); err != nil {
-		return nil, err
-	}
-
-	// Parse segments into packets
-	// A packet ends when a segment length < 255 is encountered
-	var packets [][]byte
-	var currentPacket []byte
-	offset := 0
-	for _, segLen := range segmentTable {
-		currentPacket = append(currentPacket, data[offset:offset+int(segLen)]...)
-		offset += int(segLen)
-		if segLen < 255 {
-			// End of packet
-			if len(currentPacket) > 0 {
-				pkt := make([]byte, len(currentPacket))
-				copy(pkt, currentPacket)
-				packets = append(packets, pkt)
-			}
-			currentPacket = currentPacket[:0]
-		}
-	}
-	// If there's remaining data (packet spans pages), include it
-	if len(currentPacket) > 0 {
-		pkt := make([]byte, len(currentPacket))
-		copy(pkt, currentPacket)
-		packets = append(packets, pkt)
-	}
-
-	return &oggPage{
-		isHeader: isHeader,
-		packets:  packets,
-	}, nil
-}
 
 // Legacy wrappers for backwards compatibility
 func SearchAndExtract(ctx context.Context, query string) (string, string, error) {
