@@ -106,10 +106,10 @@ func getTrackInfo(ctx context.Context, query string) (title, webpageURL, duratio
 		"--no-playlist",
 	}
 
-	if _, err := os.Stat("www.youtube.com_cookies.txt"); err == nil {
+	if stat, err := os.Stat("www.youtube.com_cookies.txt"); err == nil && stat.Size() > 0 {
 		args = append(args, "--cookies", "www.youtube.com_cookies.txt")
 		log.Printf("[AFK-BOT] [AUDIO] Using www.youtube.com_cookies.txt for search...")
-	} else if _, err := os.Stat("cookies.txt"); err == nil {
+	} else if stat, err := os.Stat("cookies.txt"); err == nil && stat.Size() > 0 {
 		args = append(args, "--cookies", "cookies.txt")
 		log.Printf("[AFK-BOT] [AUDIO] Using cookies.txt for search...")
 	}
@@ -227,10 +227,10 @@ func NewStream(query string) (*StreamProvider, error) {
 		"--no-playlist",
 	}
 
-	if _, err := os.Stat("www.youtube.com_cookies.txt"); err == nil {
+	if stat, err := os.Stat("www.youtube.com_cookies.txt"); err == nil && stat.Size() > 0 {
 		args = append(args, "--cookies", "www.youtube.com_cookies.txt")
 		log.Printf("[AFK-BOT] [AUDIO] Using www.youtube.com_cookies.txt for download...")
-	} else if _, err := os.Stat("cookies.txt"); err == nil {
+	} else if stat, err := os.Stat("cookies.txt"); err == nil && stat.Size() > 0 {
 		args = append(args, "--cookies", "cookies.txt")
 		log.Printf("[AFK-BOT] [AUDIO] Using cookies.txt for download...")
 	}

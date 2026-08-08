@@ -48,6 +48,9 @@ COPY . .
 # Build the application with CGO enabled
 RUN CGO_ENABLED=1 GOOS=linux go build -o bot-afk ./cmd/bot
 
+# Ensure at least an empty cookies.txt exists so COPY doesn't fail
+RUN touch /app/cookies.txt
+
 # Stage 2: Minimal production image
 FROM ubuntu:24.04
 
@@ -60,8 +63,8 @@ RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o 
 
 WORKDIR /root/
 
-# Copy the compiled binary
-COPY --from=builder /app/bot-afk .
+# Copy the compiled binary and optional cookies files
+COPY --from=builder /app/bot-afk /app/*cookies.tx[t] ./
 
 # Copy libdave shared library
 COPY --from=builder /usr/local/lib/libdave.so /usr/local/lib/
