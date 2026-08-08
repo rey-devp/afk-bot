@@ -92,8 +92,8 @@ func Search(ctx context.Context, query string) (*SearchResult, error) {
 
 // getTrackInfo extracts the metadata from yt-dlp without downloading.
 func getTrackInfo(ctx context.Context, query string) (title, webpageURL, duration, thumbnail, uploader string, err error) {
-	// Add a 15-second timeout for the search so it doesn't hang forever
-	searchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	// Add a 45-second timeout for the search so it doesn't hang forever, but gives yt-dlp enough time to parse cookies
+	searchCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 
 	args := []string{
