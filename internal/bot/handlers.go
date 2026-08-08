@@ -44,9 +44,9 @@ func (b *Bot) handleJoinCommand(event *events.MessageCreate) {
 	}
 
 	// Find the user's current voice state
-	voiceState, ok := b.Client.Caches().VoiceState(*event.Message.GuildID, event.Message.Author.ID)
+	voiceState, ok := b.Client.Caches.VoiceState(*event.Message.GuildID, event.Message.Author.ID)
 	if !ok || voiceState.ChannelID == nil {
-		_, _ = b.Client.Rest().CreateMessage(event.ChannelID, discord.MessageCreate{
+		_, _ = b.Client.Rest.CreateMessage(event.ChannelID, discord.MessageCreate{
 			Content: "⚠️ Kamu harus berada di dalam Voice Channel terlebih dahulu!",
 		})
 		return
@@ -54,7 +54,7 @@ func (b *Bot) handleJoinCommand(event *events.MessageCreate) {
 
 	JoinVoiceChannel(b, *event.Message.GuildID, *voiceState.ChannelID)
 
-	_, _ = b.Client.Rest().CreateMessage(event.ChannelID, discord.MessageCreate{
+	_, _ = b.Client.Rest.CreateMessage(event.ChannelID, discord.MessageCreate{
 		Content: "✅ Berhasil masuk ke Voice Channel!",
 	})
 }

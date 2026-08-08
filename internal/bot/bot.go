@@ -16,7 +16,7 @@ import (
 
 // Bot holds the DisGo client, configuration, and parsed identifiers.
 type Bot struct {
-	Client  disgobot.Client
+	Client  *disgobot.Client
 	Config  *config.Config
 	GuildID snowflake.ID
 }
@@ -42,7 +42,7 @@ func New(cfg *config.Config) *Bot {
 				gateway.IntentMessageContent,
 			),
 		),
-		disgobot.WithVoiceConfigOpts(
+		disgobot.WithVoiceManagerConfigOpts(
 			voice.WithDaveSessionCreateFunc(golibdave.NewSession),
 		),
 	)

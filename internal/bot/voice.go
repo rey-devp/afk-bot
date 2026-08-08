@@ -14,7 +14,7 @@ import (
 // JoinVoiceChannel connects the bot to the specified voice channel
 // in a deafened state and starts broadcasting silence frames.
 func JoinVoiceChannel(b *Bot, guildID snowflake.ID, channelID snowflake.ID) {
-	conn := b.Client.VoiceManager().CreateConn(guildID)
+	conn := b.Client.VoiceManager.CreateConn(guildID)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
