@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -100,7 +101,7 @@ func getTrackInfo(ctx context.Context, query string) (title string, webpageURL s
 // and adds a Done channel to signal when the stream ends.
 type StreamProvider struct {
 	Session   *dca.EncodeSession
-	ytCmd     *exec.Cmd
+	filePath  string // temporary downloaded file
 	done      chan error
 	closeOnce sync.Once
 }
@@ -124,8 +125,9 @@ func (p *StreamProvider) Close() {
 		if p.Session != nil {
 			p.Session.Cleanup()
 		}
-		if p.ytCmd != nil && p.ytCmd.Process != nil {
-			p.ytCmd.Process.Kill()
+		if p.filePath != "" {
+			os.Remove(p.filePath)
+			log.Printf("[AUDIO] Deleted temporary file: %s", p.filePath)
 		}
 	})
 }
@@ -135,10 +137,39 @@ func (p *StreamProvider) WaitDone() <-chan error {
 	return p.done
 }
 
-// NewStream creates a new audio stream by piping yt-dlp directly to dca/ffmpeg.
-// The query is guaranteed to be a resolved webpage URL (from Search).
+// NewStream creates a new audio stream by downloading the audio to a temporary file,
+// then encoding it to Opus via dca/ffmpeg. This is the most stable method and avoids
+// all streaming/piping bugs with ffmpeg.
 func NewStream(query string) (*StreamProvider, error) {
-	log.Printf("[AUDIO] Starting stream for URL: %s", query)
+	log.Printf("[AUDIO] Starting download for URL: %s", query)
+
+	// Generate a unique temporary file prefix
+	tmpPrefix := filepath.Join(os.TempDir(), fmt.Sprintf("afk_audio_%d", time.Now().UnixNano()))
+	
+	// Start yt-dlp to download the audio
+	ytCmd := exec.Command("yt-dlp",
+		"--force-ipv4",
+		"-f", "bestaudio",
+		"--extractor-args", "youtube:player_client=android", // bypass youtube block
+		"-o", tmpPrefix+".%(ext)s",
+		"--no-playlist",
+		query,
+	)
+	
+	log.Println("[AUDIO] Downloading audio file...")
+	out, err := ytCmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("failed to download audio: %w, output: %s", err, string(out))
+	}
+
+	// yt-dlp appends the format extension automatically, so we must search for the file
+	files, err := filepath.Glob(tmpPrefix + ".*")
+	if err != nil || len(files) == 0 {
+		return nil, fmt.Errorf("downloaded file not found after yt-dlp success")
+	}
+	
+	downloadedFile := files[0]
+	log.Printf("[AUDIO] Successfully downloaded to %s", downloadedFile)
 
 	// Configure DCA encoding options for Discord
 	opts := dca.StdEncodeOptions
@@ -147,51 +178,18 @@ func NewStream(query string) (*StreamProvider, error) {
 	opts.Application = "audio"
 	opts.BufferedFrames = 200 // larger buffer for stability
 	
-	// Start yt-dlp to download the audio and pipe to stdout
-	ytCmd := exec.Command("yt-dlp",
-		"--force-ipv4",
-		"-f", "bestaudio",
-		"--extractor-args", "youtube:player_client=android", // bypass youtube block
-		"-o", "-",          // output media to stdout
-		"-q",               // quiet mode
-		"--no-warnings",
-		query,
-	)
-	
-	// Send yt-dlp errors to bot's console for debugging
-	ytCmd.Stderr = os.Stderr 
-
-	stdout, err := ytCmd.StdoutPipe()
+	log.Println("[AUDIO] Starting DCA/ffmpeg encode session from file...")
+	encodeSession, err := dca.EncodeFile(downloadedFile, opts)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create yt-dlp stdout pipe: %w", err)
-	}
-
-	log.Println("[AUDIO] Starting yt-dlp process...")
-	if err := ytCmd.Start(); err != nil {
-		return nil, fmt.Errorf("failed to start yt-dlp: %w", err)
-	}
-
-	// Wait briefly for yt-dlp to negotiate and start streaming data
-	time.Sleep(2 * time.Second)
-
-	log.Println("[AUDIO] Starting DCA/ffmpeg encode session from pipe...")
-	encodeSession, err := dca.EncodeMem(stdout, opts)
-	if err != nil {
-		ytCmd.Process.Kill()
+		os.Remove(downloadedFile) // cleanup if encode fails
 		return nil, fmt.Errorf("failed to create dca encode session: %w", err)
 	}
 
 	provider := &StreamProvider{
-		Session: encodeSession,
-		ytCmd:   ytCmd, // keep reference to kill it later
-		done:    make(chan error, 1),
+		Session:  encodeSession,
+		filePath: downloadedFile,
+		done:     make(chan error, 1),
 	}
-
-	// Wait for yt-dlp in background to avoid zombies
-	go func() {
-		_ = ytCmd.Wait()
-		log.Println("[AUDIO] yt-dlp process finished")
-	}()
 
 	log.Println("[AUDIO] Stream pipeline ready!")
 	return provider, nil
