@@ -87,7 +87,6 @@ func NewStream(query string) (*StreamProvider, error) {
 		"-f", "bestaudio",
 		"--retries", "5",
 		"--fragment-retries", "5",
-		"--extractor-args", "youtube:player_client=android,web",
 		"-o", tmpPrefix + ".%(ext)s",
 		"--no-playlist",
 	}

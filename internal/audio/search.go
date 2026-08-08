@@ -95,7 +95,6 @@ func getTrackInfo(ctx context.Context, query string) (title, webpageURL, duratio
 		"--force-ipv4",
 		"--no-download",
 		"--retries", "5",
-		"--extractor-args", "youtube:player_client=android,web",
 		"--print", "%(title)s\n%(webpage_url)s\n%(duration_string)s\n%(thumbnail)s\n%(uploader)s",
 		"--no-warnings",
 		"--no-playlist",
