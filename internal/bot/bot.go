@@ -8,6 +8,7 @@ import (
 
 	"github.com/disgoorg/disgo"
 	disgobot "github.com/disgoorg/disgo/bot"
+	"github.com/disgoorg/disgo/cache"
 	"github.com/disgoorg/disgo/gateway"
 	"github.com/disgoorg/disgo/voice"
 	"github.com/disgoorg/godave/golibdave"
@@ -41,6 +42,9 @@ func New(cfg *config.Config) *Bot {
 				gateway.IntentGuildMessages,
 				gateway.IntentMessageContent,
 			),
+		),
+		disgobot.WithCacheConfigOpts(
+			cache.WithCaches(cache.FlagVoiceStates),
 		),
 		disgobot.WithVoiceManagerConfigOpts(
 			voice.WithDaveSessionCreateFunc(golibdave.NewSession),
