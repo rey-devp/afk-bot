@@ -98,11 +98,21 @@ func (q *GuildQueue) playRoutine(ctx context.Context, track Track) {
 	q.stream = stream
 	q.mu.Unlock()
 
-	// Get the voice connection
+	// Get the voice connection - it may have dropped while we were waiting for yt-dlp
 	conn := q.Bot.Client.VoiceManager.GetConn(q.GuildID)
 	if conn == nil {
-		log.Printf("[QUEUE] ERROR: No voice connection for guild %s", q.GuildID)
-		return
+		log.Printf("[QUEUE] Voice connection lost while preparing stream. Attempting reconnect...")
+		q.Bot.mu.RLock()
+		channelID, exists := q.Bot.ActiveChannels[q.GuildID]
+		q.Bot.mu.RUnlock()
+		if exists {
+			JoinVoiceChannel(q.Bot, q.GuildID, channelID)
+			conn = q.Bot.Client.VoiceManager.GetConn(q.GuildID)
+		}
+		if conn == nil {
+			log.Printf("[QUEUE] ERROR: Could not reconnect to voice for guild %s", q.GuildID)
+			return
+		}
 	}
 
 	// CRITICAL: Set speaking flag BEFORE sending audio frames

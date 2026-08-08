@@ -2,6 +2,7 @@ package audio
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -52,9 +53,13 @@ func Search(ctx context.Context, query string) (*SearchResult, error) {
 
 // getTitle extracts just the title from yt-dlp without downloading.
 func getTitle(ctx context.Context, query string) (string, error) {
-	cmd := exec.CommandContext(ctx, "yt-dlp",
+	// Add a 15-second timeout for the search so it doesn't hang forever
+	searchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(searchCtx, "yt-dlp",
 		"--force-ipv4",
-		"--no-download",      // don't download anything
+		"--no-download",
 		"--print", "%(title)s",
 		"--no-warnings",
 		"--no-playlist",
@@ -63,9 +68,8 @@ func getTitle(ctx context.Context, query string) (string, error) {
 	out, err := cmd.Output()
 	if err != nil {
 		var exitErr *exec.ExitError
-		if ok := err.(*exec.ExitError); ok != nil {
+		if errors.As(err, &exitErr) {
 			log.Printf("[AUDIO] yt-dlp search error: %s", string(exitErr.Stderr))
-			_ = ok // suppress unused
 		}
 		return "", err
 	}
