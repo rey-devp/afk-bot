@@ -13,17 +13,34 @@ import (
 
 // SearchAndExtract gets the direct audio URL from a query (YouTube search or URL).
 func SearchAndExtract(ctx context.Context, query string) (title string, url string, err error) {
-	// First, check if it's already a URL
 	isURL := strings.HasPrefix(query, "http://") || strings.HasPrefix(query, "https://")
 
+	// Try extracting with the given query (or ytsearch)
+	title, url, err = executeYtDlp(ctx, query, isURL, "ytsearch:")
+	if err == nil {
+		return title, url, nil
+	}
+
+	// If it failed and it's NOT a direct URL, fallback to SoundCloud search
+	if !isURL {
+		log.Printf("[AUDIO] YouTube search failed or blocked, falling back to SoundCloud for query: %s", query)
+		title, url, err = executeYtDlp(ctx, query, isURL, "scsearch:")
+		if err == nil {
+			return title, url, nil
+		}
+	}
+
+	return "", "", err
+}
+
+func executeYtDlp(ctx context.Context, query string, isURL bool, searchPrefix string) (string, string, error) {
 	var cmd *exec.Cmd
+	// --force-ipv4 sometimes helps bypass IPv6 datacenter blocks on YouTube
 	if isURL {
-		// Use URL directly
-		cmd = exec.CommandContext(ctx, "yt-dlp", "-f", "bestaudio", "-e", "-g", "--no-playlist", query)
+		cmd = exec.CommandContext(ctx, "yt-dlp", "--force-ipv4", "-f", "bestaudio", "-e", "-g", "--no-playlist", query)
 	} else {
-		// Search on YouTube
-		searchQuery := fmt.Sprintf("ytsearch:%s", query)
-		cmd = exec.CommandContext(ctx, "yt-dlp", "-f", "bestaudio", "-e", "-g", "--no-playlist", searchQuery)
+		searchQuery := fmt.Sprintf("%s%s", searchPrefix, query)
+		cmd = exec.CommandContext(ctx, "yt-dlp", "--force-ipv4", "-f", "bestaudio", "-e", "-g", "--no-playlist", searchQuery)
 	}
 
 	out, err := cmd.Output()
@@ -37,9 +54,7 @@ func SearchAndExtract(ctx context.Context, query string) (title string, url stri
 
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	if len(lines) >= 2 {
-		title = lines[0]
-		url = lines[1]
-		return title, url, nil
+		return lines[0], lines[1], nil
 	}
 
 	return "", "", errors.New("failed to parse yt-dlp output")
