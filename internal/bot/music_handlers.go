@@ -28,7 +28,7 @@ func (b *Bot) handlePlayCommand(event *events.MessageCreate, content string) {
 
 	// Tell the user we are searching
 	msg, _ := b.Client.Rest.CreateMessage(event.ChannelID, discord.MessageCreate{
-		Embeds: []discord.Embed{buildEmbed("🔍 Mencari Lagu...", fmt.Sprintf("Mencari `%s` di YouTube/SoundCloud", query), 0x3498db)},
+		Embeds: []discord.Embed{buildEmbed("🔍 Mencari Lagu...", fmt.Sprintf("Mencari `%s` di SoundCloud", query), 0x3498db)},
 	})
 
 	// We run this in a goroutine because yt-dlp might take a few seconds

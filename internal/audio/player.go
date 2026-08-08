@@ -31,6 +31,22 @@ func Search(ctx context.Context, query string) (*SearchResult, error) {
 	isURL := strings.HasPrefix(query, "http://") || strings.HasPrefix(query, "https://")
 
 	if isURL {
+		if strings.Contains(query, "spotify.com") {
+			log.Printf("[AFK-BOT] [AUDIO] Detected Spotify URL, extracting metadata via yt-dlp...")
+			// yt-dlp can extract metadata from Spotify (but cannot download audio).
+			title, _, _, _, uploader, err := getTrackInfo(ctx, query)
+			if err == nil && title != "" {
+				scQuery := title
+				if uploader != "" && uploader != "NA" {
+					scQuery = uploader + " " + title
+				}
+				log.Printf("[AFK-BOT] [AUDIO] Converted Spotify URL to SoundCloud search: %s", scQuery)
+				// Recursively search SoundCloud using the extracted metadata
+				return Search(ctx, scQuery)
+			}
+			log.Printf("[AFK-BOT] [AUDIO] Failed to extract Spotify metadata: %v. Proceeding with raw URL...", err)
+		}
+
 		// For direct URLs, just get the title
 		title, _, duration, thumb, uploader, err := getTrackInfo(ctx, query)
 		if err != nil {
@@ -41,12 +57,34 @@ func Search(ctx context.Context, query string) (*SearchResult, error) {
 		}, nil
 	}
 
-	// Always use SoundCloud search to avoid YouTube bot restrictions
+	// Attempt SoundCloud search first
 	log.Printf("[AFK-BOT] [AUDIO] Searching SoundCloud: %s", query)
 	title, webpageURL, duration, thumb, uploader, err := getTrackInfo(ctx, fmt.Sprintf("scsearch:%s", query))
-	if err != nil {
-		return nil, fmt.Errorf("failed to find track on SoundCloud: %w", err)
+	
+	// If SoundCloud returns a 30-second preview (common for major labels), or fails, fallback to YouTube
+	if err != nil || duration == "0:30" || duration == "00:30" || duration == "30" {
+		log.Printf("[AFK-BOT] [AUDIO] SoundCloud returned 30s preview or error (%v). Falling back to YouTube...", err)
+		
+		ytTitle, ytURL, ytDur, ytThumb, ytUploader, ytErr := getTrackInfo(ctx, fmt.Sprintf("ytsearch:%s", query))
+		if ytErr == nil {
+			return &SearchResult{
+				Title: ytTitle, Query: ytURL, Duration: ytDur, Thumbnail: ytThumb, Uploader: ytUploader,
+			}, nil
+		}
+		
+		log.Printf("[AFK-BOT] [AUDIO] YouTube fallback failed: %v", ytErr)
+		
+		// If both fail, and we had a valid 30s SoundCloud preview, just return it as a last resort
+		if err == nil {
+			log.Printf("[AFK-BOT] [AUDIO] Using 30s preview as last resort")
+			return &SearchResult{
+				Title: title + " (30s Preview)", Query: webpageURL, Duration: duration, Thumbnail: thumb, Uploader: uploader,
+			}, nil
+		}
+		
+		return nil, fmt.Errorf("failed to find track on both SoundCloud and YouTube: %w", ytErr)
 	}
+
 	return &SearchResult{
 		Title: title, Query: webpageURL, Duration: duration, Thumbnail: thumb, Uploader: uploader,
 	}, nil
@@ -62,7 +100,7 @@ func getTrackInfo(ctx context.Context, query string) (title, webpageURL, duratio
 		"--force-ipv4",
 		"--no-download",
 		"--retries", "5",
-		"--extractor-args", "youtube:player_client=android",
+		"--extractor-args", "youtube:player_client=tv,android,web",
 		"--print", "%(title)s\n%(webpage_url)s\n%(duration_string)s\n%(thumbnail)s\n%(uploader)s",
 		"--no-warnings",
 		"--no-playlist",
@@ -174,7 +212,7 @@ func NewStream(query string) (*StreamProvider, error) {
 		"-f", "bestaudio",
 		"--retries", "5",
 		"--fragment-retries", "5",
-		"--extractor-args", "youtube:player_client=android",
+		"--extractor-args", "youtube:player_client=tv,android,web",
 		"-o", tmpPrefix+".%(ext)s",
 		"--no-playlist",
 		query,
