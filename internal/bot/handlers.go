@@ -124,9 +124,15 @@ func (b *Bot) handlePlayCommand(event *events.MessageCreate, content string) {
 		result, err := audio.Search(context.Background(), query)
 		if err != nil {
 			log.Printf("[PLAY] Search failed for '%s': %v", query, err)
+			
+			errMsg := "⚠️ Gagal menemukan atau memutar lagu tersebut."
+			if strings.Contains(err.Error(), "YOUTUBE_BLOCKED") {
+				errMsg = "⚠️ **YouTube memblokir bot dari link ini!**\nSaran: Gunakan **NAMA LAGU** saja (contoh: `!play sesi potret`) agar bot bisa memutarnya melalui jalur alternatif (SoundCloud)."
+			}
+			
 			if msg != nil {
 				_, _ = b.Client.Rest.UpdateMessage(msg.ChannelID, msg.ID, discord.MessageUpdate{
-					Content: &[]string{"⚠️ Gagal menemukan atau memutar lagu tersebut."}[0],
+					Content: &[]string{errMsg}[0],
 				})
 			}
 			return

@@ -29,6 +29,9 @@ func Search(ctx context.Context, query string) (*SearchResult, error) {
 		// For direct URLs, just get the title
 		title, _, err := getTrackInfo(ctx, query)
 		if err != nil {
+			if strings.Contains(query, "youtube.com") || strings.Contains(query, "youtu.be") {
+				return nil, fmt.Errorf("YOUTUBE_BLOCKED")
+			}
 			return nil, err
 		}
 		// If it's already a URL, just use it directly
@@ -59,6 +62,7 @@ func getTrackInfo(ctx context.Context, query string) (title string, webpageURL s
 	cmd := exec.CommandContext(searchCtx, "yt-dlp",
 		"--force-ipv4",
 		"--no-download",
+		"--extractor-args", "youtube:player_client=android", // Attempt to bypass YouTube bot block
 		"--print", "%(title)s\n%(webpage_url)s",
 		"--no-warnings",
 		"--no-playlist",
@@ -142,6 +146,7 @@ func NewStream(query string) (*StreamProvider, error) {
 		"--force-ipv4",
 		"-f", "bestaudio",
 		"-g", // --get-url
+		"--extractor-args", "youtube:player_client=android", // Attempt to bypass YouTube bot block
 		"--no-warnings",
 		"--no-playlist",
 		query,
