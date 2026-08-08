@@ -114,6 +114,7 @@ type StreamProvider struct {
 	filePath    string // temporary downloaded file to clean up
 	done        chan error
 	closeOnce   sync.Once
+	packetCount int
 }
 
 // ProvideOpusFrame reads the next opus frame.
@@ -132,6 +133,17 @@ func (p *StreamProvider) ProvideOpusFrame() ([]byte, error) {
 		if p.skipPackets > 0 {
 			p.skipPackets--
 			continue
+		}
+		
+		p.packetCount++
+		if p.packetCount < 10 { // Just log the first few packets
+			if len(packet) > 0 {
+				toc := packet[0]
+				config := toc >> 3
+				stereo := (toc >> 2) & 1
+				frameCountCode := toc & 3
+				log.Printf("[AUDIO DEBUG] Packet %d: length=%d bytes, TOC=0x%02X (Config=%d, Stereo=%d, FrameCountCode=%d)", p.packetCount, len(packet), toc, config, stereo, frameCountCode)
+			}
 		}
 
 		return packet, nil
@@ -217,6 +229,8 @@ func NewStream(query string) (*StreamProvider, error) {
 		"-vbr", "on",
 		"-compression_level", "10",
 		"-f", "ogg",         // OGG container output
+		"-page_duration", "20000", // Force 1 packet per page (20ms = 20000us)
+		"-flush_packets", "1",
 		"-loglevel", "warning",
 		"pipe:1",            // output to stdout
 	)
