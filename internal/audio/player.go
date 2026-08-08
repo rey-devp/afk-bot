@@ -183,6 +183,9 @@ func NewStream(query string) (*StreamProvider, error) {
 	// Optional: add reconnect options for ffmpeg in case the stream drops
 	// opts.AudioFilter = "" // No filters
 
+	// Enable DCA logging to see ffmpeg stderr
+	dca.Logger = log.Default()
+
 	log.Println("[AUDIO] Starting DCA/ffmpeg encode session...")
 	encodeSession, err := dca.EncodeFile(audioURL, opts)
 	if err != nil {
