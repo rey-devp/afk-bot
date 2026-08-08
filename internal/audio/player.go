@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -23,7 +24,7 @@ func SearchAndExtract(ctx context.Context, query string) (title string, url stri
 
 	// If it failed and it's NOT a direct URL, fallback to SoundCloud search
 	if !isURL {
-		log.Printf("[AUDIO] YouTube search failed or blocked, falling back to SoundCloud for query: %s", query)
+		log.Printf("[AUDIO] YouTube search failed or blocked. Fallback to SoundCloud: %s", query)
 		title, url, err = executeYtDlp(ctx, query, isURL, "scsearch:")
 		if err == nil {
 			return title, url, nil
@@ -47,7 +48,7 @@ func executeYtDlp(ctx context.Context, query string, isURL bool, searchPrefix st
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			log.Printf("[AUDIO] yt-dlp error: %s", string(exitErr.Stderr))
+			log.Printf("[AUDIO] yt-dlp extraction error: %s", string(exitErr.Stderr))
 		}
 		return "", "", fmt.Errorf("failed to extract audio: %w", err)
 	}
@@ -94,9 +95,15 @@ func NewOpusStream(url string) (*StreamProvider, error) {
 	opts.Application = "audio"
 
 	// Run yt-dlp to download and pipe to stdout
-	ytCmd := exec.Command("yt-dlp", "--force-ipv4", "-f", "bestaudio", "-o", "-", url)
+	log.Printf("[AUDIO] Starting yt-dlp stream for: %s", url)
+	ytCmd := exec.Command("yt-dlp", "--force-ipv4", "-q", "--no-warnings", "-f", "bestaudio", "-o", "-", url)
+	
+	// Optimize logs: pipe stderr to bot's console so we can see if YouTube blocks the download
+	ytCmd.Stderr = os.Stderr
+	
 	stdout, err := ytCmd.StdoutPipe()
 	if err != nil {
+		log.Printf("[AUDIO] Failed to create stdout pipe: %v", err)
 		return nil, err
 	}
 
