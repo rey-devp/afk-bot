@@ -13,24 +13,38 @@ import (
 
 // JoinVoiceChannel connects the bot to the specified voice channel
 // in a deafened state and starts broadcasting silence frames.
+// It runs in a goroutine and retries up to 3 times if it fails (useful for Render network drops).
 func JoinVoiceChannel(b *Bot, guildID snowflake.ID, channelID snowflake.ID) {
-	conn := b.Client.VoiceManager.CreateConn(guildID)
+	go func() {
+		conn := b.Client.VoiceManager.CreateConn(guildID)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+		maxRetries := 3
+		for i := 1; i <= maxRetries; i++ {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			
+			log.Printf("[VOICE] Attempt %d/%d to join voice channel %s...", i, maxRetries, channelID)
+			err := conn.Open(ctx, channelID, false, true)
+			cancel()
 
-	// selfMute=false, selfDeaf=true
-	if err := conn.Open(ctx, channelID, false, true); err != nil {
-		log.Printf("[VOICE] Error joining voice channel %s: %v", channelID, err)
-		return
-	}
+			if err == nil {
+				log.Printf("[VOICE] Joined voice channel %s successfully", channelID)
+				
+				// Attach the silence provider so the bot keeps sending empty Opus frames
+				conn.SetOpusFrameProvider(&audio.SilenceProvider{})
 
-	log.Printf("[VOICE] Joined voice channel %s successfully", channelID)
+				if err := conn.SetSpeaking(context.Background(), voice.SpeakingFlagMicrophone); err != nil {
+					log.Printf("[VOICE] Error setting speaking flag: %v", err)
+				}
+				return
+			}
 
-	// Attach the silence provider so the bot keeps sending empty Opus frames
-	conn.SetOpusFrameProvider(&audio.SilenceProvider{})
+			log.Printf("[VOICE] Failed attempt %d to join %s: %v", i, channelID, err)
+			
+			if i < maxRetries {
+				time.Sleep(3 * time.Second) // wait before retry
+			}
+		}
 
-	if err := conn.SetSpeaking(context.Background(), voice.SpeakingFlagMicrophone); err != nil {
-		log.Printf("[VOICE] Error setting speaking flag: %v", err)
-	}
+		log.Printf("[VOICE] ERROR: Exhausted all retries. Could not join voice channel %s", channelID)
+	}()
 }
