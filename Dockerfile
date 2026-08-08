@@ -18,7 +18,7 @@ RUN apk add --no-cache \
 # Clone godave and run the libdave install script
 RUN git clone https://github.com/disgoorg/godave /tmp/godave && \
     chmod +x /tmp/godave/scripts/libdave_install.sh && \
-    /bin/bash /tmp/godave/scripts/libdave_install.sh
+    /bin/bash /tmp/godave/scripts/libdave_install.sh v0.3.0
 
 # Make sure pkg-config can find the installed libdave
 ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig"
