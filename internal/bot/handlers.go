@@ -13,8 +13,17 @@ import (
 
 // onReady is called when the bot successfully connects to Discord.
 func (b *Bot) onReady(event *events.Ready) {
-	log.Printf("[BOT] %s is ready and online!", event.User.Tag())
-	log.Println("[BOT] Waiting for '!join' command in text channels across all servers.")
+	log.Printf("[AFK-BOT] [SYSTEM] %s is ready and online!", event.User.Tag())
+	log.Println("[AFK-BOT] [SYSTEM] Waiting for '!join' command in text channels across all servers.")
+}
+
+// buildEmbed creates a beautiful standard embed
+func buildEmbed(title, description string, color int) discord.Embed {
+	return discord.Embed{
+		Title:       title,
+		Description: description,
+		Color:       color,
+	}
 }
 
 // onMessageCreate handles incoming messages and checks for bot commands.
@@ -62,9 +71,9 @@ func (b *Bot) handleJoinCommand(event *events.MessageCreate, content string) {
 		// User provided a voice channel name
 		channels, err := b.Client.Rest.GetGuildChannels(*event.Message.GuildID)
 		if err != nil {
-			log.Printf("[BOT] Error getting channels: %v", err)
+			log.Printf("[AFK-BOT] [VOICE] Error getting channels: %v", err)
 			_, _ = b.Client.Rest.CreateMessage(event.ChannelID, discord.MessageCreate{
-				Content: "⚠️ Terjadi kesalahan saat mencari Voice Channel.",
+				Embeds: []discord.Embed{buildEmbed("⚠️ Error", "Terjadi kesalahan saat mencari Voice Channel.", 0xe74c3c)},
 			})
 			return
 		}
@@ -78,7 +87,7 @@ func (b *Bot) handleJoinCommand(event *events.MessageCreate, content string) {
 
 		if targetChannelID == 0 {
 			_, _ = b.Client.Rest.CreateMessage(event.ChannelID, discord.MessageCreate{
-				Content: "⚠️ Voice Channel dengan nama **" + args + "** tidak ditemukan di server ini!",
+				Embeds: []discord.Embed{buildEmbed("⚠️ Tidak Ditemukan", "Voice Channel dengan nama **"+args+"** tidak ditemukan di server ini!", 0xf1c40f)},
 			})
 			return
 		}
@@ -87,7 +96,7 @@ func (b *Bot) handleJoinCommand(event *events.MessageCreate, content string) {
 		voiceState, ok := b.Client.Caches.VoiceState(*event.Message.GuildID, event.Message.Author.ID)
 		if !ok || voiceState.ChannelID == nil {
 			_, _ = b.Client.Rest.CreateMessage(event.ChannelID, discord.MessageCreate{
-				Content: "⚠️ Kamu harus berada di dalam Voice Channel terlebih dahulu, ATAU ketik: `!join <nama voice>`",
+				Embeds: []discord.Embed{buildEmbed("⚠️ Gagal Bergabung", "Kamu harus berada di dalam Voice Channel terlebih dahulu, ATAU ketik: `!join <nama voice>`", 0xf1c40f)},
 			})
 			return
 		}
@@ -102,7 +111,7 @@ func (b *Bot) handleJoinCommand(event *events.MessageCreate, content string) {
 	JoinVoiceChannel(b, *event.Message.GuildID, targetChannelID)
 
 	_, _ = b.Client.Rest.CreateMessage(event.ChannelID, discord.MessageCreate{
-		Content: "✅ Berhasil masuk ke Voice Channel!",
+		Embeds: []discord.Embed{buildEmbed("✅ Berhasil", "Aku telah bergabung ke Voice Channel!", 0x2ecc71)},
 	})
 }
 
@@ -130,7 +139,7 @@ func (b *Bot) handleLeaveCommand(event *events.MessageCreate) {
 	}
 
 	_, _ = b.Client.Rest.CreateMessage(event.ChannelID, discord.MessageCreate{
-		Content: "👋 Berhasil keluar dari Voice Channel!",
+		Embeds: []discord.Embed{buildEmbed("👋 Sampai Jumpa", "Berhasil keluar dari Voice Channel!", 0x3498db)},
 	})
 }
 
@@ -172,14 +181,14 @@ func (b *Bot) onVoiceStateUpdate(event *events.GuildVoiceStateUpdate) {
 
 	// If the bot's ChannelID becomes nil, it means it was disconnected (kicked/left)
 	if event.VoiceState.ChannelID == nil {
-		log.Printf("[BOT] Disconnected from voice channel in guild %s. Checking auto-rejoin...", event.VoiceState.GuildID)
+		log.Printf("[AFK-BOT] [VOICE] Disconnected from voice channel in guild %s. Checking auto-rejoin...", event.VoiceState.GuildID)
 
 		b.mu.RLock()
 		channelID, exists := b.ActiveChannels[event.VoiceState.GuildID]
 		b.mu.RUnlock()
 
 		if exists {
-			log.Printf("[BOT] Auto-rejoining channel %s in guild %s...", channelID, event.VoiceState.GuildID)
+			log.Printf("[AFK-BOT] [VOICE] Auto-rejoining channel %s in guild %s...", channelID, event.VoiceState.GuildID)
 			// Wait a brief moment before rejoining to avoid rate limits or state conflicts
 			go func() {
 				time.Sleep(2 * time.Second)

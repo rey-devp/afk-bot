@@ -38,7 +38,7 @@ func (q *GuildQueue) AddTrack(track Track) {
 	q.mu.Lock()
 	q.Tracks = append(q.Tracks, track)
 	q.mu.Unlock()
-	log.Printf("[QUEUE] Track added: %s (guild %s, queue length: %d)", track.Title, q.GuildID, len(q.Tracks))
+	log.Printf("[AFK-BOT] [QUEUE] Track added: %s (guild %s, queue length: %d)", track.Title, q.GuildID, len(q.Tracks))
 }
 
 func (q *GuildQueue) PlayNext() {
@@ -46,12 +46,12 @@ func (q *GuildQueue) PlayNext() {
 	defer q.mu.Unlock()
 
 	if q.isPlaying {
-		log.Printf("[QUEUE] Already playing in guild %s, skipping PlayNext", q.GuildID)
+		log.Printf("[AFK-BOT] [QUEUE] Already playing in guild %s, skipping PlayNext", q.GuildID)
 		return
 	}
 
 	if len(q.Tracks) == 0 {
-		log.Printf("[QUEUE] No more tracks in guild %s, switching to silence", q.GuildID)
+		log.Printf("[AFK-BOT] [QUEUE] No more tracks in guild %s, switching to silence", q.GuildID)
 		q.CurrentTrack = nil
 		// No more tracks, switch back to SilenceProvider to prevent AFK kick
 		conn := q.Bot.Client.VoiceManager.GetConn(q.GuildID)
@@ -70,7 +70,7 @@ func (q *GuildQueue) PlayNext() {
 	ctx, cancel := context.WithCancel(context.Background())
 	q.cancelPlay = cancel
 
-	log.Printf("[QUEUE] Starting playback: %s in guild %s", track.Title, q.GuildID)
+	log.Printf("[AFK-BOT] [QUEUE] Starting playback: %s in guild %s", track.Title, q.GuildID)
 	go q.playRoutine(ctx, track)
 }
 
@@ -85,17 +85,17 @@ func (q *GuildQueue) playRoutine(ctx context.Context, track Track) {
 		}
 		q.mu.Unlock()
 
-		log.Printf("[QUEUE] Track finished: %s in guild %s", track.Title, q.GuildID)
+		log.Printf("[AFK-BOT] [QUEUE] Track finished: %s in guild %s", track.Title, q.GuildID)
 		// Play next automatically
 		q.PlayNext()
 	}()
 
-	log.Printf("[QUEUE] Creating audio stream for: %s", track.Title)
+	log.Printf("[AFK-BOT] [QUEUE] Creating audio stream for: %s", track.Title)
 
 	// Create the audio stream (this calls yt-dlp -> ffmpeg -> opus)
 	stream, err := audio.NewStream(track.Query)
 	if err != nil {
-		log.Printf("[QUEUE] ERROR creating audio stream for '%s': %v", track.Title, err)
+		log.Printf("[AFK-BOT] [QUEUE] ERROR creating audio stream for '%s': %v", track.Title, err)
 		return
 	}
 
@@ -108,7 +108,7 @@ func (q *GuildQueue) playRoutine(ctx context.Context, track Track) {
 	for i := 0; i < 5; i++ {
 		conn = q.Bot.Client.VoiceManager.GetConn(q.GuildID)
 		if conn == nil {
-			log.Printf("[QUEUE] No voice connection found. Attempting reconnect...")
+			log.Printf("[AFK-BOT] [QUEUE] No voice connection found. Attempting reconnect...")
 			q.Bot.mu.RLock()
 			channelID, exists := q.Bot.ActiveChannels[q.GuildID]
 			q.Bot.mu.RUnlock()
@@ -122,7 +122,7 @@ func (q *GuildQueue) playRoutine(ctx context.Context, track Track) {
 			if err == nil {
 				break // Connection is healthy and ready!
 			}
-			log.Printf("[QUEUE] Voice connection not ready yet (%v), waiting...", err)
+			log.Printf("[AFK-BOT] [QUEUE] Voice connection not ready yet (%v), waiting...", err)
 		}
 		
 		time.Sleep(2 * time.Second)
@@ -130,24 +130,24 @@ func (q *GuildQueue) playRoutine(ctx context.Context, track Track) {
 
 	// Final check before we inject the stream
 	if conn == nil || conn.SetSpeaking(context.Background(), voice.SpeakingFlagMicrophone) != nil {
-		log.Printf("[QUEUE] ERROR: Could not get a ready voice connection for guild %s after retries", q.GuildID)
+		log.Printf("[AFK-BOT] [QUEUE] ERROR: Could not get a ready voice connection for guild %s after retries", q.GuildID)
 		return
 	}
 
 	// Set the audio provider to our stream
-	log.Printf("[QUEUE] Setting opus frame provider for: %s", track.Title)
+	log.Printf("[AFK-BOT] [QUEUE] Setting opus frame provider for: %s", track.Title)
 	conn.SetOpusFrameProvider(stream)
 
-	log.Printf("[QUEUE] Now playing: %s", track.Title)
+	log.Printf("[AFK-BOT] [QUEUE] Now playing: %s", track.Title)
 
 	// Wait for the track to finish or be cancelled
 	select {
 	case <-ctx.Done():
-		log.Printf("[QUEUE] Track skipped/stopped: %s", track.Title)
+		log.Printf("[AFK-BOT] [QUEUE] Track skipped/stopped: %s", track.Title)
 		return
 	case err := <-stream.WaitDone():
 		if err != nil && err != io.EOF {
-			log.Printf("[QUEUE] Stream error for '%s': %v", track.Title, err)
+			log.Printf("[AFK-BOT] [QUEUE] Stream error for '%s': %v", track.Title, err)
 		}
 		return
 	}
@@ -157,7 +157,7 @@ func (q *GuildQueue) Skip() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if q.cancelPlay != nil {
-		log.Printf("[QUEUE] Skipping current track in guild %s", q.GuildID)
+		log.Printf("[AFK-BOT] [QUEUE] Skipping current track in guild %s", q.GuildID)
 		q.cancelPlay()
 	}
 }
@@ -168,7 +168,7 @@ func (q *GuildQueue) Stop() {
 	q.Tracks = []Track{} // Clear queue
 	q.isPaused = false
 	if q.cancelPlay != nil {
-		log.Printf("[QUEUE] Stopping playback and clearing queue in guild %s", q.GuildID)
+		log.Printf("[AFK-BOT] [QUEUE] Stopping playback and clearing queue in guild %s", q.GuildID)
 		q.cancelPlay()
 	}
 }

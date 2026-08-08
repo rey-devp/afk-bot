@@ -42,7 +42,7 @@ func Search(ctx context.Context, query string) (*SearchResult, error) {
 	}
 
 	// Always use SoundCloud search to avoid YouTube bot restrictions
-	log.Printf("[AUDIO] Searching SoundCloud: %s", query)
+	log.Printf("[AFK-BOT] [AUDIO] Searching SoundCloud: %s", query)
 	title, webpageURL, duration, thumb, uploader, err := getTrackInfo(ctx, fmt.Sprintf("scsearch:%s", query))
 	if err != nil {
 		return nil, fmt.Errorf("failed to find track on SoundCloud: %w", err)
@@ -72,7 +72,7 @@ func getTrackInfo(ctx context.Context, query string) (title, webpageURL, duratio
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			log.Printf("[AUDIO] yt-dlp search error: %s", string(exitErr.Stderr))
+			log.Printf("[AFK-BOT] [AUDIO] yt-dlp search error: %s", string(exitErr.Stderr))
 		}
 		return "", "", "", "", "", err
 	}
@@ -114,7 +114,6 @@ type StreamProvider struct {
 	filePath    string // temporary downloaded file to clean up
 	done        chan error
 	closeOnce   sync.Once
-	packetCount int
 }
 
 // ProvideOpusFrame reads the next opus frame.
@@ -134,17 +133,6 @@ func (p *StreamProvider) ProvideOpusFrame() ([]byte, error) {
 			p.skipPackets--
 			continue
 		}
-		
-		p.packetCount++
-		if p.packetCount < 10 { // Just log the first few packets
-			if len(packet) > 0 {
-				toc := packet[0]
-				config := toc >> 3
-				stereo := (toc >> 2) & 1
-				frameCountCode := toc & 3
-				log.Printf("[AUDIO DEBUG] Packet %d: length=%d bytes, TOC=0x%02X (Config=%d, Stereo=%d, FrameCountCode=%d)", p.packetCount, len(packet), toc, config, stereo, frameCountCode)
-			}
-		}
 
 		return packet, nil
 	}
@@ -152,7 +140,7 @@ func (p *StreamProvider) ProvideOpusFrame() ([]byte, error) {
 
 func (p *StreamProvider) Close() {
 	p.closeOnce.Do(func() {
-		log.Println("[AUDIO] Closing StreamProvider...")
+		log.Println("[AFK-BOT] [AUDIO] Closing StreamProvider...")
 		if p.ffmpegCmd != nil && p.ffmpegCmd.Process != nil {
 			p.ffmpegCmd.Process.Kill()
 			p.ffmpegCmd.Wait()
@@ -162,7 +150,7 @@ func (p *StreamProvider) Close() {
 		}
 		if p.filePath != "" {
 			os.Remove(p.filePath)
-			log.Printf("[AUDIO] Deleted temporary file: %s", p.filePath)
+			log.Printf("[AFK-BOT] [AUDIO] Deleted temporary file: %s", p.filePath)
 		}
 	})
 }
@@ -176,7 +164,7 @@ func (p *StreamProvider) WaitDone() <-chan error {
 // 1. Downloading the audio using yt-dlp to a temporary file
 // 2. Using dca to accurately encode the file to Opus frames
 func NewStream(query string) (*StreamProvider, error) {
-	log.Printf("[AUDIO] Starting download for URL: %s", query)
+	log.Printf("[AFK-BOT] [AUDIO] Starting download for URL: %s", query)
 
 	// Step 1: Download the audio file using yt-dlp
 	tmpPrefix := filepath.Join(os.TempDir(), fmt.Sprintf("afk_audio_%d", time.Now().UnixNano()))
@@ -192,7 +180,7 @@ func NewStream(query string) (*StreamProvider, error) {
 		query,
 	)
 
-	log.Println("[AUDIO] Downloading audio file...")
+	log.Println("[AFK-BOT] [AUDIO] Downloading audio file...")
 	out, err := ytCmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("failed to download audio: %w, output: %s", err, string(out))
@@ -212,7 +200,7 @@ func NewStream(query string) (*StreamProvider, error) {
 		os.Remove(downloadedFile)
 		return nil, fmt.Errorf("downloaded file is empty or unreadable")
 	}
-	log.Printf("[AUDIO] Successfully downloaded to %s (%d bytes)", downloadedFile, stat.Size())
+	log.Printf("[AFK-BOT] [AUDIO] Successfully downloaded to %s (%d bytes)", downloadedFile, stat.Size())
 
 	// Step 2: Start ffmpeg to output OGG/Opus format for Discord
 	// Discord requires: Opus codec, 48kHz, stereo
@@ -244,7 +232,7 @@ func NewStream(query string) (*StreamProvider, error) {
 		return nil, fmt.Errorf("failed to create ffmpeg stdout pipe: %w", err)
 	}
 
-	log.Println("[AUDIO] Starting ffmpeg encode (OGG/Opus)...")
+	log.Println("[AFK-BOT] [AUDIO] Starting ffmpeg encode (OGG/Opus)...")
 	if err := ffmpegCmd.Start(); err != nil {
 		os.Remove(downloadedFile)
 		return nil, fmt.Errorf("failed to start ffmpeg: %w", err)

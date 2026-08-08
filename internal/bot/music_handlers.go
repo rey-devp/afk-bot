@@ -12,15 +12,6 @@ import (
 	"github.com/disgoorg/disgo/events"
 )
 
-// buildEmbed creates a beautiful standard embed
-func buildEmbed(title, description string, color int) discord.Embed {
-	return discord.Embed{
-		Title:       title,
-		Description: description,
-		Color:       color,
-	}
-}
-
 // handlePlayCommand handles searching and queuing music.
 func (b *Bot) handlePlayCommand(event *events.MessageCreate, content string) {
 	if event.Message.GuildID == nil {
@@ -42,10 +33,10 @@ func (b *Bot) handlePlayCommand(event *events.MessageCreate, content string) {
 
 	// We run this in a goroutine because yt-dlp might take a few seconds
 	go func() {
-		log.Printf("[PLAY] Searching for: %s", query)
+		log.Printf("[AFK-BOT] [PLAY] Searching for: %s", query)
 		result, err := audio.Search(context.Background(), query)
 		if err != nil {
-			log.Printf("[PLAY] Search failed for '%s': %v", query, err)
+			log.Printf("[AFK-BOT] [PLAY] Search failed for '%s': %v", query, err)
 
 			errMsg := "Gagal menemukan atau memutar lagu tersebut."
 			if strings.Contains(err.Error(), "YOUTUBE_BLOCKED") {
@@ -60,7 +51,7 @@ func (b *Bot) handlePlayCommand(event *events.MessageCreate, content string) {
 			return
 		}
 
-		log.Printf("[PLAY] Found: %s (query: %s)", result.Title, result.Query)
+		log.Printf("[AFK-BOT] [PLAY] Found: %s (query: %s)", result.Title, result.Query)
 
 		queue := b.GetQueue(*event.Message.GuildID)
 
@@ -107,7 +98,7 @@ func (b *Bot) handlePlayCommand(event *events.MessageCreate, content string) {
 		b.mu.RUnlock()
 
 		if !inVoice {
-			log.Printf("[PLAY] Bot not in voice, auto-joining...")
+			log.Printf("[AFK-BOT] [PLAY] Bot not in voice, auto-joining...")
 			b.handleJoinCommand(event, "!join")
 		}
 
