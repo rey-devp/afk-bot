@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -12,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jonas747/dca"
+	"github.com/jonas747/ogg"
 )
 
 // SearchResult holds the metadata found by yt-dlp search.
@@ -106,30 +107,46 @@ const opusFrameSize = 3840
 // StreamProvider wraps an ffmpeg process and reads raw Opus frames from it.
 // It implements voice.OpusFrameProvider for disgo.
 type StreamProvider struct {
-	session   *dca.EncodeSession
-	filePath  string // temporary downloaded file to clean up
-	done      chan error
-	closeOnce sync.Once
+	ffmpegCmd   *exec.Cmd
+	stdout      io.ReadCloser
+	decoder     *ogg.PacketDecoder
+	skipPackets int
+	filePath    string // temporary downloaded file to clean up
+	done        chan error
+	closeOnce   sync.Once
 }
 
 // ProvideOpusFrame reads the next opus frame.
 func (p *StreamProvider) ProvideOpusFrame() ([]byte, error) {
-	frame, err := p.session.OpusFrame()
-	if err != nil {
-		select {
-		case p.done <- err:
-		default:
+	for {
+		packet, _, err := p.decoder.Decode()
+		if err != nil {
+			select {
+			case p.done <- err:
+			default:
+			}
+			return nil, err
 		}
-		return nil, err
+
+		// The first 2 packets in an Ogg Opus stream are metadata (OpusHead, OpusTags)
+		if p.skipPackets > 0 {
+			p.skipPackets--
+			continue
+		}
+
+		return packet, nil
 	}
-	return frame, nil
 }
 
 func (p *StreamProvider) Close() {
 	p.closeOnce.Do(func() {
 		log.Println("[AUDIO] Closing StreamProvider...")
-		if p.session != nil {
-			p.session.Cleanup()
+		if p.ffmpegCmd != nil && p.ffmpegCmd.Process != nil {
+			p.ffmpegCmd.Process.Kill()
+			p.ffmpegCmd.Wait()
+		}
+		if p.stdout != nil {
+			p.stdout.Close()
 		}
 		if p.filePath != "" {
 			os.Remove(p.filePath)
@@ -185,25 +202,60 @@ func NewStream(query string) (*StreamProvider, error) {
 	}
 	log.Printf("[AUDIO] Successfully downloaded to %s (%d bytes)", downloadedFile, stat.Size())
 
-	// Step 2: Start dca encoding
-	log.Println("[AUDIO] Starting dca encode (Opus)...")
-	opts := dca.StdEncodeOptions
-	opts.RawOutput = true
-	opts.Bitrate = 96
-	opts.Application = dca.AudioApplicationAudio
-	opts.VBR = true
+	// Step 2: Start ffmpeg to output OGG/Opus format for Discord
+	// Discord requires: Opus codec, 48kHz, stereo
+	// We use OGG container so we can extract individual opus packets reliably
+	ffmpegCmd := exec.Command("ffmpeg",
+		"-i", downloadedFile,
+		"-vn",               // no video
+		"-c:a", "libopus",   // encode to opus
+		"-b:a", "96k",       // 96kbps bitrate
+		"-ar", "48000",      // 48kHz sample rate
+		"-ac", "2",          // stereo
+		"-frame_duration", "20", // 20ms frames (Discord standard)
+		"-application", "audio",
+		"-vbr", "on",
+		"-compression_level", "10",
+		"-f", "ogg",         // OGG container output
+		"-loglevel", "warning",
+		"pipe:1",            // output to stdout
+	)
 
-	encodeSession, err := dca.EncodeFile(downloadedFile, opts)
+	// Capture ffmpeg stderr for debugging
+	ffmpegCmd.Stderr = os.Stderr
+
+	stdout, err := ffmpegCmd.StdoutPipe()
 	if err != nil {
 		os.Remove(downloadedFile)
-		return nil, fmt.Errorf("failed to start dca encode: %w", err)
+		return nil, fmt.Errorf("failed to create ffmpeg stdout pipe: %w", err)
 	}
 
-	provider := &StreamProvider{
-		session:   encodeSession,
-		filePath:  downloadedFile,
-		done:      make(chan error, 1),
+	log.Println("[AUDIO] Starting ffmpeg encode (OGG/Opus)...")
+	if err := ffmpegCmd.Start(); err != nil {
+		os.Remove(downloadedFile)
+		return nil, fmt.Errorf("failed to start ffmpeg: %w", err)
 	}
+
+	decoder := ogg.NewPacketDecoder(ogg.NewDecoder(stdout))
+
+	provider := &StreamProvider{
+		ffmpegCmd:   ffmpegCmd,
+		stdout:      stdout,
+		decoder:     decoder,
+		skipPackets: 2, // Skip OpusHead and OpusTags
+		filePath:    downloadedFile,
+		done:        make(chan error, 1),
+	}
+
+	// Wait for ffmpeg in background to avoid zombies
+	go func() {
+		err := ffmpegCmd.Wait()
+		if err != nil {
+			log.Printf("[AUDIO] ffmpeg process exited with error: %v", err)
+		} else {
+			log.Println("[AUDIO] ffmpeg process completed successfully")
+		}
+	}()
 
 	log.Println("[AUDIO] Stream pipeline ready!")
 	return provider, nil
