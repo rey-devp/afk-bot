@@ -3,10 +3,12 @@ package bot
 import (
 	"context"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/events"
+	"github.com/disgoorg/snowflake/v2"
 )
 
 // onReady is called when the bot successfully connects to Discord.
@@ -22,37 +24,68 @@ func (b *Bot) onMessageCreate(event *events.MessageCreate) {
 		return
 	}
 
-	switch event.Message.Content {
-	case "!join":
-		b.handleJoinCommand(event)
-	case "!leave":
+	content := strings.TrimSpace(event.Message.Content)
+
+	if strings.HasPrefix(content, "!join") {
+		b.handleJoinCommand(event, content)
+	} else if content == "!leave" {
 		b.handleLeaveCommand(event)
-	case "!help":
+	} else if content == "!help" {
 		b.handleHelpCommand(event)
 	}
 }
 
 // handleJoinCommand makes the bot join the voice channel of the user who sent the command.
-func (b *Bot) handleJoinCommand(event *events.MessageCreate) {
+func (b *Bot) handleJoinCommand(event *events.MessageCreate, content string) {
 	if event.Message.GuildID == nil {
 		return
 	}
 
-	// Find the user's current voice state
-	voiceState, ok := b.Client.Caches.VoiceState(*event.Message.GuildID, event.Message.Author.ID)
-	if !ok || voiceState.ChannelID == nil {
-		_, _ = b.Client.Rest.CreateMessage(event.ChannelID, discord.MessageCreate{
-			Content: "⚠️ Kamu harus berada di dalam Voice Channel terlebih dahulu!",
-		})
-		return
+	args := strings.TrimSpace(strings.TrimPrefix(content, "!join"))
+	var targetChannelID snowflake.ID
+
+	if args != "" {
+		// User provided a voice channel name
+		channels, err := b.Client.Rest.GetGuildChannels(*event.Message.GuildID)
+		if err != nil {
+			log.Printf("[BOT] Error getting channels: %v", err)
+			_, _ = b.Client.Rest.CreateMessage(event.ChannelID, discord.MessageCreate{
+				Content: "⚠️ Terjadi kesalahan saat mencari Voice Channel.",
+			})
+			return
+		}
+
+		for _, ch := range channels {
+			if ch.Type() == discord.ChannelTypeGuildVoice && strings.EqualFold(ch.Name(), args) {
+				targetChannelID = ch.ID()
+				break
+			}
+		}
+
+		if targetChannelID == 0 {
+			_, _ = b.Client.Rest.CreateMessage(event.ChannelID, discord.MessageCreate{
+				Content: "⚠️ Voice Channel dengan nama **" + args + "** tidak ditemukan di server ini!",
+			})
+			return
+		}
+	} else {
+		// Default to user's current voice state
+		voiceState, ok := b.Client.Caches.VoiceState(*event.Message.GuildID, event.Message.Author.ID)
+		if !ok || voiceState.ChannelID == nil {
+			_, _ = b.Client.Rest.CreateMessage(event.ChannelID, discord.MessageCreate{
+				Content: "⚠️ Kamu harus berada di dalam Voice Channel terlebih dahulu, ATAU ketik: `!join <nama voice>`",
+			})
+			return
+		}
+		targetChannelID = *voiceState.ChannelID
 	}
 
 	// Update the configured voice channel so the bot remembers where it belongs
 	b.mu.Lock()
-	b.ActiveChannels[*event.Message.GuildID] = *voiceState.ChannelID
+	b.ActiveChannels[*event.Message.GuildID] = targetChannelID
 	b.mu.Unlock()
 	
-	JoinVoiceChannel(b, *event.Message.GuildID, *voiceState.ChannelID)
+	JoinVoiceChannel(b, *event.Message.GuildID, targetChannelID)
 
 	_, _ = b.Client.Rest.CreateMessage(event.ChannelID, discord.MessageCreate{
 		Content: "✅ Berhasil masuk ke Voice Channel!",
@@ -86,7 +119,7 @@ func (b *Bot) handleHelpCommand(event *events.MessageCreate) {
 Saya adalah Bot yang tukang tidur, izinkan saya untuk tidur di voice kalian.
 
 **🛠️ Daftar Perintah & Cara Kerja:**
-> **!join**  : Pastikan kamu sudah berada di dalam Voice Channel. Ketik ini agar aku ikut masuk dan tertidur di sana selamanya (24/7).
+> **!join [nama voice]** : Panggil aku agar masuk ke Voice Channel! Kamu bisa menyebutkan namanya secara spesifik (contoh: *!join Mabar*). Jika tidak, aku akan otomatis masuk ke channel tempat kamu berada.
 > **!leave** : Ketik ini jika kamu bosan dan ingin mengusirku dari Voice Channel di server ini.
 > **!help**  : Menampilkan panduan tidurku (pesan ini).
 
