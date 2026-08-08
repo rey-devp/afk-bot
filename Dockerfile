@@ -1,5 +1,9 @@
-# Stage 1: Build the Go binary
-FROM golang:1.25-bookworm AS builder
+# Stage 1: Build the Go binary using Ubuntu 24.04 to satisfy GLIBC_2.38+ requirements of the prebuilt libdave
+FROM ubuntu:24.04 AS builder
+
+# Copy Go from the official golang image
+COPY --from=golang:1.25-bookworm /usr/local/go /usr/local/go
+ENV PATH="/usr/local/go/bin:${PATH}"
 
 WORKDIR /app
 
@@ -9,7 +13,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Download prebuilt libdave from Discord's official releases
-# (bypasses the broken cmake/vcpkg/boringssl build-from-source entirely)
 RUN LIBDAVE_URL="https://github.com/discord/libdave/releases/download/v1.1.0/cpp/libdave-Linux-X64-boringssl.zip" && \
     curl -fsSL "$LIBDAVE_URL" -o /tmp/libdave.zip && \
     mkdir -p /tmp/libdave && \
@@ -46,7 +49,7 @@ COPY . .
 RUN CGO_ENABLED=1 GOOS=linux go build -o bot-afk ./cmd/bot
 
 # Stage 2: Minimal production image
-FROM debian:bookworm-slim
+FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates libstdc++6 \
