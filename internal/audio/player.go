@@ -65,7 +65,7 @@ func Search(ctx context.Context, query string) (*SearchResult, error) {
 	if err != nil || duration == "0:30" || duration == "00:30" || duration == "30" {
 		log.Printf("[AFK-BOT] [AUDIO] SoundCloud returned 30s preview or error (%v). Falling back to YouTube...", err)
 		
-		ytTitle, ytURL, ytDur, ytThumb, ytUploader, ytErr := getTrackInfo(ctx, fmt.Sprintf("ytsearch:%s", query))
+		ytTitle, ytURL, ytDur, ytThumb, ytUploader, ytErr := getTrackInfo(ctx, fmt.Sprintf("ytmsearch:%s", query))
 		if ytErr == nil {
 			return &SearchResult{
 				Title: ytTitle, Query: ytURL, Duration: ytDur, Thumbnail: ytThumb, Uploader: ytUploader,
