@@ -14,9 +14,9 @@ RUN LIBDAVE_URL="https://github.com/discord/libdave/releases/download/v1.1.0/cpp
     curl -fsSL "$LIBDAVE_URL" -o /tmp/libdave.zip && \
     mkdir -p /tmp/libdave && \
     unzip -o /tmp/libdave.zip -d /tmp/libdave && \
-    mkdir -p /usr/local/lib /usr/local/include/dave && \
+    mkdir -p /usr/local/lib /usr/local/include && \
     cp /tmp/libdave/lib/libdave.so /usr/local/lib/ && \
-    cp /tmp/libdave/include/dave/dave.h /usr/local/include/dave/ && \
+    cp /tmp/libdave/include/dave/dave.h /usr/local/include/dave.h && \
     ldconfig && \
     rm -rf /tmp/libdave /tmp/libdave.zip
 
