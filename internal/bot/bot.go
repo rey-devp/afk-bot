@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"log"
+	"sync"
 
 	"bot-afk/internal/config"
 
@@ -15,23 +16,19 @@ import (
 	"github.com/disgoorg/snowflake/v2"
 )
 
-// Bot holds the DisGo client, configuration, and parsed identifiers.
+// Bot holds the DisGo client, configuration, and multi-guild state.
 type Bot struct {
-	Client  *disgobot.Client
-	Config  *config.Config
-	GuildID snowflake.ID
+	Client         *disgobot.Client
+	Config         *config.Config
+	ActiveChannels map[snowflake.ID]snowflake.ID
+	mu             sync.RWMutex
 }
 
 // New creates and configures a new Bot instance.
 func New(cfg *config.Config) *Bot {
-	guildID, err := snowflake.Parse(cfg.GuildID)
-	if err != nil {
-		log.Fatalf("[BOT] Invalid GUILD_ID: %v", err)
-	}
-
 	b := &Bot{
-		Config:  cfg,
-		GuildID: guildID,
+		Config:         cfg,
+		ActiveChannels: make(map[snowflake.ID]snowflake.ID),
 	}
 
 	client, err := disgo.New(cfg.BotToken,
@@ -58,6 +55,7 @@ func New(cfg *config.Config) *Bot {
 	client.AddEventListeners(
 		disgobot.NewListenerFunc(b.onReady),
 		disgobot.NewListenerFunc(b.onMessageCreate),
+		disgobot.NewListenerFunc(b.onVoiceStateUpdate),
 	)
 
 	b.Client = client
