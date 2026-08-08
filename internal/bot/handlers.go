@@ -27,6 +27,8 @@ func (b *Bot) onMessageCreate(event *events.MessageCreate) {
 		b.handleJoinCommand(event)
 	case "!leave":
 		b.handleLeaveCommand(event)
+	case "!help":
+		b.handleHelpCommand(event)
 	}
 }
 
@@ -75,6 +77,23 @@ func (b *Bot) handleLeaveCommand(event *events.MessageCreate) {
 
 	_, _ = b.Client.Rest.CreateMessage(event.ChannelID, discord.MessageCreate{
 		Content: "👋 Berhasil keluar dari Voice Channel!",
+	})
+}
+
+// handleHelpCommand sends a help message to introduce the bot and list its commands.
+func (b *Bot) handleHelpCommand(event *events.MessageCreate) {
+	helpText := `**Halo!** 💤
+Saya adalah Bot yang tukang tidur, izinkan saya untuk tidur di voice kalian. Panggil aku dengan ketik **!join** biar aku bisa nemenin kamu sambil tidur, mau nge kick aku? cukup ketik **!leave** maka aku akan pergi dengan sakit hati. 💔
+
+**🛠️ Daftar Perintah & Cara Kerja:**
+> **!join**  : Pastikan kamu sudah berada di dalam Voice Channel. Ketik ini agar aku ikut masuk dan tertidur di sana selamanya (24/7).
+> **!leave** : Ketik ini jika kamu bosan dan ingin mengusirku dari Voice Channel di server ini.
+> **!help**  : Menampilkan panduan tidurku (pesan ini).
+
+*Catatan Rahasia: Aku punya kekuatan kebal AFK! Discord tidak akan bisa menendangku secara otomatis. Tapi kalau kalian nekat menendangku secara manual, aku akan langsung menerobos masuk lagi dalam 2 detik! (Kecuali kalian menggunakan !leave)* 😤`
+
+	_, _ = b.Client.Rest.CreateMessage(event.ChannelID, discord.MessageCreate{
+		Content: helpText,
 	})
 }
 
