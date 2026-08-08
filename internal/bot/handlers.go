@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"bot-afk/internal/audio"
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/events"
 	"github.com/disgoorg/snowflake/v2"
@@ -31,10 +30,18 @@ func (b *Bot) onMessageCreate(event *events.MessageCreate) {
 		b.handleJoinCommand(event, content)
 	} else if strings.HasPrefix(content, "!play") {
 		b.handlePlayCommand(event, content)
-	} else if content == "!skip" {
+	} else if strings.HasPrefix(content, "!skip") {
 		b.handleSkipCommand(event)
-	} else if content == "!stop" {
+	} else if strings.HasPrefix(content, "!stop") {
 		b.handleStopCommand(event)
+	} else if strings.HasPrefix(content, "!queue") {
+		b.handleQueueCommand(event)
+	} else if strings.HasPrefix(content, "!np") {
+		b.handleNpCommand(event)
+	} else if strings.HasPrefix(content, "!pause") {
+		b.handlePauseCommand(event)
+	} else if strings.HasPrefix(content, "!resume") {
+		b.handleResumeCommand(event)
 	} else if content == "!leave" {
 		b.handleLeaveCommand(event)
 	} else if content == "!help" {
@@ -99,107 +106,9 @@ func (b *Bot) handleJoinCommand(event *events.MessageCreate, content string) {
 	})
 }
 
-// handlePlayCommand handles searching and queuing music.
-func (b *Bot) handlePlayCommand(event *events.MessageCreate, content string) {
-	if event.Message.GuildID == nil {
-		return
-	}
 
-	query := strings.TrimSpace(strings.TrimPrefix(content, "!play"))
-	if query == "" {
-		_, _ = b.Client.Rest.CreateMessage(event.ChannelID, discord.MessageCreate{
-			Content: "⚠️ Masukkan nama lagu atau URL! Contoh: `!play shape of you`",
-		})
-		return
-	}
 
-	// Tell the user we are searching
-	msg, _ := b.Client.Rest.CreateMessage(event.ChannelID, discord.MessageCreate{
-		Content: "🔍 Sedang mencari `" + query + "` di YouTube/Spotify...",
-	})
-	
-	// We run this in a goroutine because yt-dlp might take a few seconds
-	go func() {
-		log.Printf("[PLAY] Searching for: %s", query)
-		result, err := audio.Search(context.Background(), query)
-		if err != nil {
-			log.Printf("[PLAY] Search failed for '%s': %v", query, err)
-			
-			errMsg := "⚠️ Gagal menemukan atau memutar lagu tersebut."
-			if strings.Contains(err.Error(), "YOUTUBE_BLOCKED") {
-				errMsg = "⚠️ **YouTube memblokir bot dari link ini!**\nSaran: Gunakan **NAMA LAGU** saja (contoh: `!play sesi potret`) agar bot bisa memutarnya melalui jalur alternatif (SoundCloud)."
-			}
-			
-			if msg != nil {
-				_, _ = b.Client.Rest.UpdateMessage(msg.ChannelID, msg.ID, discord.MessageUpdate{
-					Content: &[]string{errMsg}[0],
-				})
-			}
-			return
-		}
 
-		log.Printf("[PLAY] Found: %s (query: %s)", result.Title, result.Query)
-
-		queue := b.GetQueue(*event.Message.GuildID)
-		
-		queue.mu.Lock()
-		wasPlaying := queue.isPlaying
-		queue.mu.Unlock()
-
-		queue.AddTrack(Track{
-			Title:       result.Title,
-			Query:       result.Query,
-			RequestedBy: event.Message.Author.ID,
-		})
-
-		if msg != nil {
-			statusMsg := "🎵 **Memutar:** " + result.Title
-			if wasPlaying {
-				statusMsg = "🎵 **Ditambahkan ke antrean:** " + result.Title
-			}
-			_, _ = b.Client.Rest.UpdateMessage(msg.ChannelID, msg.ID, discord.MessageUpdate{
-				Content: &[]string{statusMsg}[0],
-			})
-		}
-
-		// Check if bot is in a voice channel
-		b.mu.RLock()
-		_, inVoice := b.ActiveChannels[*event.Message.GuildID]
-		b.mu.RUnlock()
-
-		if !inVoice {
-			log.Printf("[PLAY] Bot not in voice, auto-joining...")
-			// Try to join the user's voice channel automatically
-			b.handleJoinCommand(event, "!join")
-		}
-
-		queue.PlayNext()
-	}()
-}
-
-// handleSkipCommand skips the current track.
-func (b *Bot) handleSkipCommand(event *events.MessageCreate) {
-	if event.Message.GuildID == nil {
-		return
-	}
-	queue := b.GetQueue(*event.Message.GuildID)
-	queue.Skip()
-	_, _ = b.Client.Rest.CreateMessage(event.ChannelID, discord.MessageCreate{
-		Content: "⏭️ Lagu dilewati!",
-	})
-}
-
-// handleStopCommand stops playback and clears the queue.
-func (b *Bot) handleStopCommand(event *events.MessageCreate) {
-	if event.Message.GuildID == nil {
-		return
-	}
-	queue := b.GetQueue(*event.Message.GuildID)
-	queue.Stop()
-	_, _ = b.Client.Rest.CreateMessage(event.ChannelID, discord.MessageCreate{
-		Content: "🛑 Pemutaran dihentikan dan antrean dibersihkan.",
-	})
-}
 
 // handleLeaveCommand makes the bot leave the voice channel of the server.
 func (b *Bot) handleLeaveCommand(event *events.MessageCreate) {
@@ -230,18 +139,27 @@ func (b *Bot) handleHelpCommand(event *events.MessageCreate) {
 	helpText := `**Halo!** 💤
 Saya adalah Bot yang tukang tidur, izinkan saya untuk tidur di voice kalian.
 
-**🛠️ Daftar Perintah & Cara Kerja:**
-> **!join [nama voice]** : Panggil aku agar masuk ke Voice Channel! Kamu bisa menyebutkan namanya secara spesifik (contoh: *!join Mabar*). Jika tidak, aku akan otomatis masuk ke channel tempat kamu berada.
-> **!play <nama/url>** : Memutar musik dari YouTube/Spotify. Aku akan otomatis masuk ke Voice jika belum ada di sana.
-> **!skip** : Melewati lagu yang sedang diputar.
-> **!stop** : Menghentikan musik dan membersihkan antrean lagu.
-> **!leave** : Ketik ini jika kamu bosan dan ingin mengusirku dari Voice Channel di server ini.
+**🛠️ Daftar Perintah Utama:**
+> **!join [nama voice]** : Panggil aku agar masuk ke Voice Channel! Kamu bisa menyebutkan namanya secara spesifik.
+> **!leave** : Mengusirku dari Voice Channel.
 > **!help**  : Menampilkan panduan (pesan ini).
 
-*Catatan Rahasia: Aku punya kekuatan kebal AFK! Discord tidak akan bisa menendangku secara otomatis. Tapi kalau kalian nekat menendangku secara manual, aku akan langsung menerobos masuk lagi dalam 2 detik! (Kecuali kalian menggunakan !leave)* 😤`
+**🎵 Perintah Musik:**
+> **!play <nama/url>** : Memutar musik dari YouTube/SoundCloud.
+> **!skip** : Melewati lagu yang sedang diputar.
+> **!stop** : Menghentikan musik dan membersihkan antrean lagu.
+> **!pause / !resume** : Menjeda atau melanjutkan pemutaran musik.
+> **!queue** : Melihat daftar lagu yang sedang mengantre.
+> **!np** : Menampilkan informasi lagu yang saat ini sedang diputar.
+
+*Catatan Rahasia: Aku punya kekuatan kebal AFK! Discord tidak akan bisa menendangku secara otomatis.* 😤`
 
 	_, _ = b.Client.Rest.CreateMessage(event.ChannelID, discord.MessageCreate{
-		Content: helpText,
+		Embeds: []discord.Embed{{
+			Title:       "📘 Panduan Lengkap AFK Bot",
+			Description: helpText,
+			Color:       0x3498db,
+		}},
 	})
 }
 

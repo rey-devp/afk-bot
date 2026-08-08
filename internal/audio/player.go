@@ -16,47 +16,55 @@ import (
 	"github.com/jonas747/dca"
 )
 
-// SearchResult holds the metadata found by yt-dlp search (title only).
+// SearchResult holds the metadata found by yt-dlp search.
 type SearchResult struct {
-	Title string
-	Query string // original query or resolved URL for downloading
+	Title     string
+	Query     string // original query or resolved URL for downloading
+	Duration  string
+	Thumbnail string
+	Uploader  string
 }
 
 // Search finds a track using yt-dlp but does NOT download it.
-// It returns the title and the resolved webpage URL (which yt-dlp can use to extract media later).
+// It returns the title, URL, and metadata (which yt-dlp can use to extract media later).
 func Search(ctx context.Context, query string) (*SearchResult, error) {
 	isURL := strings.HasPrefix(query, "http://") || strings.HasPrefix(query, "https://")
 
 	if isURL {
 		// For direct URLs, just get the title
-		title, _, err := getTrackInfo(ctx, query)
+		title, _, duration, thumb, uploader, err := getTrackInfo(ctx, query)
 		if err != nil {
 			if strings.Contains(query, "youtube.com") || strings.Contains(query, "youtu.be") {
 				return nil, fmt.Errorf("YOUTUBE_BLOCKED")
 			}
 			return nil, err
 		}
-		// If it's already a URL, just use it directly
-		return &SearchResult{Title: title, Query: query}, nil
+		return &SearchResult{
+			Title: title, Query: query, Duration: duration, Thumbnail: thumb, Uploader: uploader,
+		}, nil
 	}
 
 	// Try YouTube search first
-	title, webpageURL, err := getTrackInfo(ctx, fmt.Sprintf("ytsearch:%s", query))
+	title, webpageURL, duration, thumb, uploader, err := getTrackInfo(ctx, fmt.Sprintf("ytsearch:%s", query))
 	if err == nil {
-		return &SearchResult{Title: title, Query: webpageURL}, nil
+		return &SearchResult{
+			Title: title, Query: webpageURL, Duration: duration, Thumbnail: thumb, Uploader: uploader,
+		}, nil
 	}
 
 	// Fallback to SoundCloud
 	log.Printf("[AUDIO] YouTube search failed. Fallback to SoundCloud: %s", query)
-	title, webpageURL, err = getTrackInfo(ctx, fmt.Sprintf("scsearch:%s", query))
+	title, webpageURL, duration, thumb, uploader, err = getTrackInfo(ctx, fmt.Sprintf("scsearch:%s", query))
 	if err != nil {
 		return nil, fmt.Errorf("failed to find track on YouTube or SoundCloud: %w", err)
 	}
-	return &SearchResult{Title: title, Query: webpageURL}, nil
+	return &SearchResult{
+		Title: title, Query: webpageURL, Duration: duration, Thumbnail: thumb, Uploader: uploader,
+	}, nil
 }
 
-// getTrackInfo extracts the title and webpage URL from yt-dlp without downloading.
-func getTrackInfo(ctx context.Context, query string) (title string, webpageURL string, err error) {
+// getTrackInfo extracts the metadata from yt-dlp without downloading.
+func getTrackInfo(ctx context.Context, query string) (title, webpageURL, duration, thumbnail, uploader string, err error) {
 	// Add a 15-second timeout for the search so it doesn't hang forever
 	searchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -64,8 +72,9 @@ func getTrackInfo(ctx context.Context, query string) (title string, webpageURL s
 	cmd := exec.CommandContext(searchCtx, "yt-dlp",
 		"--force-ipv4",
 		"--no-download",
+		"--retries", "5",
 		"--extractor-args", "youtube:player_client=android", // Attempt to bypass YouTube bot block
-		"--print", "%(title)s\n%(webpage_url)s",
+		"--print", "%(title)s\n%(webpage_url)s\n%(duration_string)s\n%(thumbnail)s\n%(uploader)s",
 		"--no-warnings",
 		"--no-playlist",
 		query,
@@ -76,25 +85,31 @@ func getTrackInfo(ctx context.Context, query string) (title string, webpageURL s
 		if errors.As(err, &exitErr) {
 			log.Printf("[AUDIO] yt-dlp search error: %s", string(exitErr.Stderr))
 		}
-		return "", "", err
+		return "", "", "", "", "", err
 	}
 	
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	if len(lines) < 2 {
 		// Sometimes yt-dlp might only return title if webpage_url is missing
 		if len(lines) == 1 && lines[0] != "" {
-			return lines[0], query, nil
+			return lines[0], query, "00:00", "", "", nil
 		}
-		return "", "", fmt.Errorf("yt-dlp returned incomplete info")
+		return "", "", "", "", "", fmt.Errorf("yt-dlp returned incomplete info")
 	}
 	
 	title = strings.TrimSpace(lines[0])
 	webpageURL = strings.TrimSpace(lines[1])
 	
-	if title == "" || webpageURL == "" {
-		return "", "", fmt.Errorf("yt-dlp returned empty title or URL")
+	if len(lines) >= 5 {
+		duration = strings.TrimSpace(lines[2])
+		thumbnail = strings.TrimSpace(lines[3])
+		uploader = strings.TrimSpace(lines[4])
 	}
-	return title, webpageURL, nil
+	
+	if title == "" || webpageURL == "" {
+		return "", "", "", "", "", fmt.Errorf("yt-dlp returned empty title or URL")
+	}
+	return title, webpageURL, duration, thumbnail, uploader, nil
 }
 
 // StreamProvider wraps a dca.EncodeSession to implement voice.OpusFrameProvider
@@ -150,6 +165,8 @@ func NewStream(query string) (*StreamProvider, error) {
 	ytCmd := exec.Command("yt-dlp",
 		"--force-ipv4",
 		"-f", "bestaudio",
+		"--retries", "5",
+		"--fragment-retries", "5",
 		"--extractor-args", "youtube:player_client=android", // bypass youtube block
 		"-o", tmpPrefix+".%(ext)s",
 		"--no-playlist",

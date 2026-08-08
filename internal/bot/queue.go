@@ -15,6 +15,9 @@ import (
 type Track struct {
 	Title       string
 	Query       string // yt-dlp compatible query (e.g. "ytsearch:xxx" or direct URL)
+	Duration    string
+	Thumbnail   string
+	Uploader    string
 	RequestedBy snowflake.ID
 }
 
@@ -25,6 +28,7 @@ type GuildQueue struct {
 	CurrentTrack *Track
 	mu           sync.Mutex
 	isPlaying    bool
+	isPaused     bool
 	cancelPlay   context.CancelFunc
 	stream       *audio.StreamProvider
 }
@@ -153,8 +157,49 @@ func (q *GuildQueue) Stop() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.Tracks = []Track{} // Clear queue
+	q.isPaused = false
 	if q.cancelPlay != nil {
 		log.Printf("[QUEUE] Stopping playback and clearing queue in guild %s", q.GuildID)
 		q.cancelPlay()
 	}
+}
+
+func (q *GuildQueue) Pause() bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if !q.isPlaying || q.isPaused {
+		return false
+	}
+	q.isPaused = true
+	conn := q.Bot.Client.VoiceManager.GetConn(q.GuildID)
+	if conn != nil {
+		// Stop sending frames by setting a silence provider
+		conn.SetOpusFrameProvider(&audio.SilenceProvider{})
+	}
+	return true
+}
+
+func (q *GuildQueue) Resume() bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if !q.isPlaying || !q.isPaused || q.stream == nil {
+		return false
+	}
+	q.isPaused = false
+	conn := q.Bot.Client.VoiceManager.GetConn(q.GuildID)
+	if conn != nil {
+		// Resume sending frames from the stream
+		conn.SetOpusFrameProvider(q.stream)
+	}
+	return true
+}
+
+func (q *GuildQueue) GetTracks() []Track {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	
+	// Create a copy to prevent data races
+	tracksCopy := make([]Track, len(q.Tracks))
+	copy(tracksCopy, q.Tracks)
+	return tracksCopy
 }
