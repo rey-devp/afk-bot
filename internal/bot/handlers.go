@@ -120,8 +120,10 @@ func (b *Bot) handlePlayCommand(event *events.MessageCreate, content string) {
 	
 	// We run this in a goroutine because yt-dlp might take a few seconds
 	go func() {
-		title, url, err := audio.SearchAndExtract(context.Background(), query)
+		log.Printf("[PLAY] Searching for: %s", query)
+		result, err := audio.Search(context.Background(), query)
 		if err != nil {
+			log.Printf("[PLAY] Search failed for '%s': %v", query, err)
 			if msg != nil {
 				_, _ = b.Client.Rest.UpdateMessage(msg.ChannelID, msg.ID, discord.MessageUpdate{
 					Content: &[]string{"⚠️ Gagal menemukan atau memutar lagu tersebut."}[0],
@@ -130,6 +132,8 @@ func (b *Bot) handlePlayCommand(event *events.MessageCreate, content string) {
 			return
 		}
 
+		log.Printf("[PLAY] Found: %s (query: %s)", result.Title, result.Query)
+
 		queue := b.GetQueue(*event.Message.GuildID)
 		
 		queue.mu.Lock()
@@ -137,15 +141,15 @@ func (b *Bot) handlePlayCommand(event *events.MessageCreate, content string) {
 		queue.mu.Unlock()
 
 		queue.AddTrack(Track{
-			Title:       title,
-			URL:         url,
+			Title:       result.Title,
+			Query:       result.Query,
 			RequestedBy: event.Message.Author.ID,
 		})
 
 		if msg != nil {
-			statusMsg := "🎵 **Memutar:** " + title
+			statusMsg := "🎵 **Memutar:** " + result.Title
 			if wasPlaying {
-				statusMsg = "🎵 **Ditambahkan ke antrean:** " + title
+				statusMsg = "🎵 **Ditambahkan ke antrean:** " + result.Title
 			}
 			_, _ = b.Client.Rest.UpdateMessage(msg.ChannelID, msg.ID, discord.MessageUpdate{
 				Content: &[]string{statusMsg}[0],
@@ -158,6 +162,7 @@ func (b *Bot) handlePlayCommand(event *events.MessageCreate, content string) {
 		b.mu.RUnlock()
 
 		if !inVoice {
+			log.Printf("[PLAY] Bot not in voice, auto-joining...")
 			// Try to join the user's voice channel automatically
 			b.handleJoinCommand(event, "!join")
 		}

@@ -8,31 +8,32 @@ import (
 
 	"bot-afk/internal/audio"
 
+	"github.com/disgoorg/disgo/voice"
 	"github.com/disgoorg/snowflake/v2"
-	"github.com/jonas747/dca"
 )
 
 type Track struct {
 	Title       string
-	URL         string
+	Query       string // yt-dlp compatible query (e.g. "ytsearch:xxx" or direct URL)
 	RequestedBy snowflake.ID
 }
 
 type GuildQueue struct {
-	GuildID       snowflake.ID
-	Bot           *Bot
-	Tracks        []Track
-	CurrentTrack  *Track
-	mu            sync.Mutex
-	isPlaying     bool
-	cancelPlay    context.CancelFunc
-	encodeSession *dca.EncodeSession
+	GuildID      snowflake.ID
+	Bot          *Bot
+	Tracks       []Track
+	CurrentTrack *Track
+	mu           sync.Mutex
+	isPlaying    bool
+	cancelPlay   context.CancelFunc
+	stream       *audio.StreamProvider
 }
 
 func (q *GuildQueue) AddTrack(track Track) {
 	q.mu.Lock()
 	q.Tracks = append(q.Tracks, track)
 	q.mu.Unlock()
+	log.Printf("[QUEUE] Track added: %s (guild %s, queue length: %d)", track.Title, q.GuildID, len(q.Tracks))
 }
 
 func (q *GuildQueue) PlayNext() {
@@ -40,10 +41,12 @@ func (q *GuildQueue) PlayNext() {
 	defer q.mu.Unlock()
 
 	if q.isPlaying {
+		log.Printf("[QUEUE] Already playing in guild %s, skipping PlayNext", q.GuildID)
 		return
 	}
 
 	if len(q.Tracks) == 0 {
+		log.Printf("[QUEUE] No more tracks in guild %s, switching to silence", q.GuildID)
 		q.CurrentTrack = nil
 		// No more tracks, switch back to SilenceProvider to prevent AFK kick
 		conn := q.Bot.Client.VoiceManager.GetConn(q.GuildID)
@@ -62,6 +65,7 @@ func (q *GuildQueue) PlayNext() {
 	ctx, cancel := context.WithCancel(context.Background())
 	q.cancelPlay = cancel
 
+	log.Printf("[QUEUE] Starting playback: %s in guild %s", track.Title, q.GuildID)
 	go q.playRoutine(ctx, track)
 }
 
@@ -70,43 +74,57 @@ func (q *GuildQueue) playRoutine(ctx context.Context, track Track) {
 		q.mu.Lock()
 		q.isPlaying = false
 		q.CurrentTrack = nil
-		if q.encodeSession != nil {
-			q.encodeSession.Cleanup()
-			q.encodeSession = nil
+		if q.stream != nil {
+			q.stream.Close()
+			q.stream = nil
 		}
 		q.mu.Unlock()
+
+		log.Printf("[QUEUE] Track finished: %s in guild %s", track.Title, q.GuildID)
 		// Play next automatically
 		q.PlayNext()
 	}()
 
-	log.Printf("[QUEUE] Playing track: %s in guild %s", track.Title, q.GuildID)
+	log.Printf("[QUEUE] Creating audio stream for: %s", track.Title)
 
-	session, err := audio.NewOpusStream(track.URL)
+	// Create the audio stream (this calls yt-dlp -> ffmpeg -> opus)
+	stream, err := audio.NewStream(track.Query)
 	if err != nil {
-		log.Printf("[QUEUE] Error creating audio stream: %v", err)
+		log.Printf("[QUEUE] ERROR creating audio stream for '%s': %v", track.Title, err)
 		return
 	}
 
 	q.mu.Lock()
-	q.encodeSession = session.Session
+	q.stream = stream
 	q.mu.Unlock()
 
+	// Get the voice connection
 	conn := q.Bot.Client.VoiceManager.GetConn(q.GuildID)
 	if conn == nil {
+		log.Printf("[QUEUE] ERROR: No voice connection for guild %s", q.GuildID)
 		return
 	}
 
-	// Set the audio provider to our ffmpeg Opus stream
-	conn.SetOpusFrameProvider(session)
+	// CRITICAL: Set speaking flag BEFORE sending audio frames
+	// Discord will ignore audio packets if we haven't declared we're speaking
+	if err := conn.SetSpeaking(context.Background(), voice.SpeakingFlagMicrophone); err != nil {
+		log.Printf("[QUEUE] WARNING: Failed to set speaking flag: %v", err)
+	}
+
+	// Set the audio provider to our stream
+	log.Printf("[QUEUE] Setting opus frame provider for: %s", track.Title)
+	conn.SetOpusFrameProvider(stream)
+
+	log.Printf("[QUEUE] Now playing: %s", track.Title)
 
 	// Wait for the track to finish or be cancelled
 	select {
 	case <-ctx.Done():
-		// Skipped or stopped
+		log.Printf("[QUEUE] Track skipped/stopped: %s", track.Title)
 		return
-	case err := <-session.Done:
+	case err := <-stream.WaitDone():
 		if err != nil && err != io.EOF {
-			log.Printf("[QUEUE] Stream ended with error: %v", err)
+			log.Printf("[QUEUE] Stream error for '%s': %v", track.Title, err)
 		}
 		return
 	}
@@ -116,6 +134,7 @@ func (q *GuildQueue) Skip() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if q.cancelPlay != nil {
+		log.Printf("[QUEUE] Skipping current track in guild %s", q.GuildID)
 		q.cancelPlay()
 	}
 }
@@ -125,6 +144,7 @@ func (q *GuildQueue) Stop() {
 	defer q.mu.Unlock()
 	q.Tracks = []Track{} // Clear queue
 	if q.cancelPlay != nil {
+		log.Printf("[QUEUE] Stopping playback and clearing queue in guild %s", q.GuildID)
 		q.cancelPlay()
 	}
 }

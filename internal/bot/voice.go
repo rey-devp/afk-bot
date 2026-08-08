@@ -16,7 +16,7 @@ import (
 func JoinVoiceChannel(b *Bot, guildID snowflake.ID, channelID snowflake.ID) {
 	conn := b.Client.VoiceManager.CreateConn(guildID)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	// selfMute=false, selfDeaf=true
