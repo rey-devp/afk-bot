@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"sync"
+	"time"
 
 	"bot-afk/internal/audio"
 
@@ -102,27 +103,35 @@ func (q *GuildQueue) playRoutine(ctx context.Context, track Track) {
 	q.stream = stream
 	q.mu.Unlock()
 
-	// Get the voice connection - it may have dropped while we were waiting for yt-dlp
-	conn := q.Bot.Client.VoiceManager.GetConn(q.GuildID)
-	if conn == nil {
-		log.Printf("[QUEUE] Voice connection lost while preparing stream. Attempting reconnect...")
-		q.Bot.mu.RLock()
-		channelID, exists := q.Bot.ActiveChannels[q.GuildID]
-		q.Bot.mu.RUnlock()
-		if exists {
-			JoinVoiceChannel(q.Bot, q.GuildID, channelID)
-			conn = q.Bot.Client.VoiceManager.GetConn(q.GuildID)
-		}
+	// Ensure we have a valid, ready voice connection before sending audio
+	var conn voice.Conn
+	for i := 0; i < 5; i++ {
+		conn = q.Bot.Client.VoiceManager.GetConn(q.GuildID)
 		if conn == nil {
-			log.Printf("[QUEUE] ERROR: Could not reconnect to voice for guild %s", q.GuildID)
-			return
+			log.Printf("[QUEUE] No voice connection found. Attempting reconnect...")
+			q.Bot.mu.RLock()
+			channelID, exists := q.Bot.ActiveChannels[q.GuildID]
+			q.Bot.mu.RUnlock()
+			if exists {
+				// Fire reconnect in background so we don't block
+				go JoinVoiceChannel(q.Bot, q.GuildID, channelID)
+			}
+		} else {
+			// Try to set speaking. If it succeeds, the connection is healthy.
+			err := conn.SetSpeaking(context.Background(), voice.SpeakingFlagMicrophone)
+			if err == nil {
+				break // Connection is healthy and ready!
+			}
+			log.Printf("[QUEUE] Voice connection not ready yet (%v), waiting...", err)
 		}
+		
+		time.Sleep(2 * time.Second)
 	}
 
-	// CRITICAL: Set speaking flag BEFORE sending audio frames
-	// Discord will ignore audio packets if we haven't declared we're speaking
-	if err := conn.SetSpeaking(context.Background(), voice.SpeakingFlagMicrophone); err != nil {
-		log.Printf("[QUEUE] WARNING: Failed to set speaking flag: %v", err)
+	// Final check before we inject the stream
+	if conn == nil || conn.SetSpeaking(context.Background(), voice.SpeakingFlagMicrophone) != nil {
+		log.Printf("[QUEUE] ERROR: Could not get a ready voice connection for guild %s after retries", q.GuildID)
+		return
 	}
 
 	// Set the audio provider to our stream
