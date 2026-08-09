@@ -7,13 +7,36 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/jonas747/ogg"
 )
 
-var youtubePlayerClients = []string{"web", "android", "ios", "tv"}
+var youtubePlayerClients = []string{"ios", "android"}
+
+var (
+	ytCooldownMap sync.Map // Map guildID string -> time.Time
+)
+
+// CheckYtCooldown returns true if the guild is currently in cooldown.
+func CheckYtCooldown(guildID string) (bool, time.Duration) {
+	if val, ok := ytCooldownMap.Load(guildID); ok {
+		expiresAt := val.(time.Time)
+		if time.Now().Before(expiresAt) {
+			return true, time.Until(expiresAt)
+		}
+		ytCooldownMap.Delete(guildID)
+	}
+	return false, 0
+}
+
+// SetYtCooldown sets a 60-second cooldown for the guild.
+func SetYtCooldown(guildID string) {
+	ytCooldownMap.Store(guildID, time.Now().Add(60*time.Second))
+	log.Printf("[AFK-BOT] [%s] [AUDIO] Bot detection triggered, entering 60s cooldown for guild", guildID)
+}
 
 // opusFrameSize is the number of bytes in a 20ms PCM frame at 48kHz stereo 16-bit.
 // 48000 samples/sec * 2 channels * 2 bytes/sample * 0.020 sec = 3840 bytes
@@ -96,6 +119,11 @@ func NewStream(guildID string, query string) (*StreamProvider, error) {
 	var downloadedFile string
 	var lastErr error
 
+	if inCooldown, remaining := CheckYtCooldown(guildID); inCooldown {
+		log.Printf("[AFK-BOT] [%s] [AUDIO] Guild still in bot-detection cooldown (%ds remaining), skipping YouTube attempt", guildID, int(remaining.Seconds()))
+		return nil, fmt.Errorf("YOUTUBE_BLOCKED_COOLDOWN: Sign in to confirm you're not a bot")
+	}
+
 	for i, client := range youtubePlayerClients {
 		log.Printf("[AFK-BOT] [%s] [AUDIO] Attempt %d/%d using player_client=%s", guildID, i+1, len(youtubePlayerClients), client)
 
@@ -120,12 +148,20 @@ func NewStream(guildID string, query string) (*StreamProvider, error) {
 			lastErr = fmt.Errorf("download succeeded but file was missing or empty")
 			log.Printf("[AFK-BOT] [%s] [AUDIO] player_client=%s failed: %v", guildID, client, lastErr)
 		} else {
-			lastErr = fmt.Errorf("player_client=%s failed: %w, output: %s", client, err, string(out))
-			log.Printf("[AFK-BOT] [%s] [AUDIO] player_client=%s failed: %v", guildID, client, err)
+			outStr := string(out)
+			lastErr = fmt.Errorf("player_client=%s failed: %w, output: %s", client, err, outStr)
+			
+			if strings.Contains(outStr, "Sign in to confirm you") || strings.Contains(outStr, "Sign in to confirm you're not a bot") {
+				log.Printf("[AFK-BOT] [%s] [AUDIO] Bot detection triggered on player_client=%s, stopping further client attempts for this URL", guildID, client)
+				SetYtCooldown(guildID)
+				return nil, lastErr
+			}
+			
+			log.Printf("[AFK-BOT] [%s] [AUDIO] player_client=%s failed (non-bot-detection): %v", guildID, client, err)
 		}
 
 		if i < len(youtubePlayerClients)-1 {
-			time.Sleep(1500 * time.Millisecond)
+			time.Sleep(2 * time.Second)
 		}
 	}
 

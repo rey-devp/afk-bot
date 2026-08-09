@@ -97,6 +97,16 @@ func SearchMany(ctx context.Context, guildID, query string, limit int) ([]Search
 		return []SearchResult{*res}, nil
 	}
 
+	if inCooldown, remaining := CheckYtCooldown(guildID); inCooldown {
+		log.Printf("[AFK-BOT] [%s] [AUDIO] Guild still in bot-detection cooldown (%ds remaining), skipping YouTube search", guildID, int(remaining.Seconds()))
+		// Fallback to soundcloud directly
+		scResults, scErr := getTrackInfoMany(ctx, guildID, fmt.Sprintf("scsearch%d:%s", limit, query))
+		if scErr == nil && len(scResults) > 0 {
+			return scResults, nil
+		}
+		return nil, fmt.Errorf("YOUTUBE_BLOCKED_COOLDOWN: Sign in to confirm you're not a bot")
+	}
+
 	log.Printf("[AFK-BOT] [%s] [AUDIO] Searching YouTube Video (Multiple): %s", guildID, query)
 	results, err := getTrackInfoMany(ctx, guildID, fmt.Sprintf("ytsearch%d:%s", limit, query))
 	
