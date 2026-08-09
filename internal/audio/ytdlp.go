@@ -1,9 +1,11 @@
 package audio
 
 import (
+	"encoding/base64"
 	"log"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 var (
@@ -26,6 +28,26 @@ func InitYtDlpConfig(cookiesPath, jsRuntime string) {
 			log.Printf("[AFK-BOT] [STARTUP-WARNING] YTDLP_COOKIES_PATH is set to '%s' but file not found: %v", ytdlpCookiesPath, err)
 		} else {
 			log.Printf("[AFK-BOT] [STARTUP-INFO] Valid cookies file detected at: %s", ytdlpCookiesPath)
+
+			// Process the file to handle base64 encoding and read-only file systems (like Render secrets)
+			if content, err := os.ReadFile(ytdlpCookiesPath); err == nil && len(content) > 0 {
+				strContent := strings.TrimSpace(string(content))
+				
+				// Try to decode as base64 in case user provided a base64 encoded string
+				if decoded, err := base64.StdEncoding.DecodeString(strContent); err == nil && strings.Contains(string(decoded), "# Netscape") {
+					content = decoded
+					log.Printf("[AFK-BOT] [STARTUP-INFO] Decoded base64 cookies file.")
+				}
+				
+				// Write to a temporary file in /tmp so yt-dlp can update the file without read-only errors
+				tmpFile := "/tmp/ytdlp_cookies.txt"
+				if err := os.WriteFile(tmpFile, content, 0644); err != nil {
+					log.Printf("[AFK-BOT] [STARTUP-WARNING] Failed to write cookies to temp file: %v", err)
+				} else {
+					log.Printf("[AFK-BOT] [STARTUP-INFO] Copied cookies to temp file: %s", tmpFile)
+					ytdlpCookiesPath = tmpFile // Override path to the writable temp file
+				}
+			}
 		}
 	} else {
 		log.Printf("[AFK-BOT] [STARTUP-WARNING] YTDLP_COOKIES_PATH is not set, yt-dlp will run without cookies")
