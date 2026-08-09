@@ -3,6 +3,7 @@ package audio
 import (
 	"log"
 	"os"
+	"os/exec"
 )
 
 var (
@@ -17,6 +18,27 @@ func InitYtDlpConfig(cookiesPath, jsRuntime string) {
 
 	if jsRuntime == "" {
 		ytdlpJSRuntimePath = "deno" // Default to deno as requested by user
+	}
+
+	// 1. Startup check for Cookies
+	if ytdlpCookiesPath != "" {
+		if _, err := os.Stat(ytdlpCookiesPath); err != nil {
+			log.Printf("[AFK-BOT] [STARTUP-WARNING] YTDLP_COOKIES_PATH is set to '%s' but file not found: %v", ytdlpCookiesPath, err)
+		} else {
+			log.Printf("[AFK-BOT] [STARTUP-INFO] Valid cookies file detected at: %s", ytdlpCookiesPath)
+		}
+	} else {
+		log.Printf("[AFK-BOT] [STARTUP-WARNING] YTDLP_COOKIES_PATH is not set, yt-dlp will run without cookies")
+	}
+
+	// 2. Startup check for JS Runtime
+	runtimeBinary := ytdlpJSRuntimePath
+	// If the path contains a colon (e.g. deno:/path), split it to check the binary name or path
+	// But usually it's just 'deno' or 'node'
+	if path, err := exec.LookPath(runtimeBinary); err != nil {
+		log.Printf("[AFK-BOT] [STARTUP-WARNING] JS Runtime '%s' not found in system PATH. yt-dlp might fail to solve challenges!", runtimeBinary)
+	} else {
+		log.Printf("[AFK-BOT] [STARTUP-INFO] JS Runtime '%s' detected at: %s", runtimeBinary, path)
 	}
 }
 
@@ -40,5 +62,7 @@ func BuildYtDlpArgs(baseArgs []string) []string {
 		}
 	}
 
+
+	log.Printf("[AFK-BOT] [AUDIO] Running yt-dlp with args: %v", args)
 	return args
 }
