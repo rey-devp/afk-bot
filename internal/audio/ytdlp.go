@@ -71,6 +71,9 @@ func BuildYtDlpArgs(guildID string, baseArgs []string) []string {
 	// Always add ejs remote component to solve challenges
 	args = append(args, "--remote-components", "ejs:github")
 
+	// Use iOS player client to bypass YouTube web-based bot detection
+	args = append(args, "--extractor-args", "youtube:player_client=ios")
+
 	// Set JS runtime
 	args = append(args, "--js-runtimes", ytdlpJSRuntimePath)
 
