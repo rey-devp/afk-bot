@@ -51,11 +51,26 @@ func Search(ctx context.Context, guildID, query string) (*SearchResult, error) {
 		}, nil
 	}
 
-	// 1. Attempt YouTube Video search first
-	log.Printf("[AFK-BOT] [%s] [AUDIO] Searching YouTube Video: %s", guildID, query)
-	title, webpageURL, duration, thumb, uploader, err := getTrackInfo(ctx, guildID, fmt.Sprintf("ytsearch1:%s", query))
+	isYouTubeQuery := !strings.HasPrefix(query, "scsearch:") // prevent double scsearch nesting
 
-	// If YouTube Video fails, fallback to SoundCloud
+	var title, webpageURL, duration, thumb, uploader string
+	var err error
+
+	if isYouTubeQuery {
+		if inCooldown, remaining := CheckYtCooldown(guildID); inCooldown {
+			log.Printf("[AFK-BOT] [%s] [AUDIO] Guild still in bot-detection cooldown (%ds remaining), skipping YouTube search", guildID, int(remaining.Seconds()))
+			// Force error to trigger SoundCloud fallback below
+			err = fmt.Errorf("YOUTUBE_BLOCKED_COOLDOWN")
+		} else {
+			// 1. Attempt YouTube Video search first
+			log.Printf("[AFK-BOT] [%s] [AUDIO] Searching YouTube Video: %s", guildID, query)
+			title, webpageURL, duration, thumb, uploader, err = getTrackInfo(ctx, guildID, fmt.Sprintf("ytsearch1:%s", query))
+		}
+	} else {
+		err = fmt.Errorf("forced soundcloud search")
+	}
+
+	// If YouTube Video fails (or was skipped due to cooldown), fallback to SoundCloud
 	if err != nil {
 		log.Printf("[AFK-BOT] [%s] [AUDIO] YouTube Video failed (%v). Falling back to SoundCloud...", guildID, err)
 		scTitle, scURL, scDur, scThumb, scUploader, scErr := getTrackInfo(ctx, guildID, fmt.Sprintf("scsearch:%s", query))

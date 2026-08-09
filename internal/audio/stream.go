@@ -119,13 +119,24 @@ func NewStream(guildID string, query string) (*StreamProvider, error) {
 	var downloadedFile string
 	var lastErr error
 
-	if inCooldown, remaining := CheckYtCooldown(guildID); inCooldown {
-		log.Printf("[AFK-BOT] [%s] [AUDIO] Guild still in bot-detection cooldown (%ds remaining), skipping YouTube attempt", guildID, int(remaining.Seconds()))
-		return nil, fmt.Errorf("YOUTUBE_BLOCKED_COOLDOWN: Sign in to confirm you're not a bot")
+	isYouTube := strings.Contains(query, "youtube.com") || strings.Contains(query, "youtu.be") || strings.HasPrefix(query, "ytsearch")
+
+	if isYouTube {
+		if inCooldown, remaining := CheckYtCooldown(guildID); inCooldown {
+			log.Printf("[AFK-BOT] [%s] [AUDIO] Guild still in bot-detection cooldown (%ds remaining), skipping YouTube attempt", guildID, int(remaining.Seconds()))
+			return nil, fmt.Errorf("YOUTUBE_BLOCKED_COOLDOWN: Sign in to confirm you're not a bot")
+		}
 	}
 
-	for i, client := range youtubePlayerClients {
-		log.Printf("[AFK-BOT] [%s] [AUDIO] Attempt %d/%d using player_client=%s", guildID, i+1, len(youtubePlayerClients), client)
+	clientsToTry := youtubePlayerClients
+	if !isYouTube {
+		clientsToTry = []string{""} // SoundCloud doesn't need specific player clients or retries
+	}
+
+	for i, client := range clientsToTry {
+		if client != "" {
+			log.Printf("[AFK-BOT] [%s] [AUDIO] Attempt %d/%d using player_client=%s", guildID, i+1, len(clientsToTry), client)
+		}
 
 		args := BuildYtDlpArgs(guildID, baseArgs, client)
 		args = append(args, query)
@@ -157,15 +168,18 @@ func NewStream(guildID string, query string) (*StreamProvider, error) {
 				return nil, lastErr
 			}
 			
-			log.Printf("[AFK-BOT] [%s] [AUDIO] player_client=%s failed (non-bot-detection): %v", guildID, client, err)
+			log.Printf("[AFK-BOT] [%s] [AUDIO] Download failed: %v", guildID, err)
 		}
 
-		if i < len(youtubePlayerClients)-1 {
+		if i < len(clientsToTry)-1 {
 			time.Sleep(2 * time.Second)
 		}
 	}
 
 	if lastErr != nil {
+		if !isYouTube {
+			return nil, fmt.Errorf("download failed: %w", lastErr)
+		}
 		return nil, fmt.Errorf("all player clients failed, last error: %w", lastErr)
 	}
 
