@@ -84,7 +84,7 @@ func NewStream(query string) (*StreamProvider, error) {
 
 	baseArgs := []string{
 		"--force-ipv4",
-		"-f", "bestaudio",
+		"-f", "bestaudio/best",
 		"--retries", "5",
 		"--fragment-retries", "5",
 		"-o", tmpPrefix + ".%(ext)s",
