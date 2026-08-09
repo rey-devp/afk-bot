@@ -55,11 +55,16 @@ RUN touch /app/cookies.txt
 FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libstdc++6 ffmpeg curl python3 nodejs \
+    ca-certificates libstdc++6 ffmpeg curl python3 python3-pip unzip \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
-    chmod a+rx /usr/local/bin/yt-dlp
+# Install Deno
+RUN curl -fsSL https://deno.land/install.sh | sh -s -- -y
+ENV DENO_INSTALL="/root/.deno"
+ENV PATH="${DENO_INSTALL}/bin:${PATH}"
+
+# Install yt-dlp via pip (always gets the latest release)
+RUN pip install --break-system-packages -U yt-dlp
 
 WORKDIR /root/
 
@@ -71,6 +76,9 @@ COPY --from=builder /usr/local/lib/libdave.so /usr/local/lib/
 RUN ldconfig
 
 ENV LD_LIBRARY_PATH="/usr/local/lib"
+
+# Verify dependencies are installed correctly
+RUN deno --version && yt-dlp --version && ffmpeg -version
 
 EXPOSE 8080
 

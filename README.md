@@ -37,7 +37,18 @@ afk-bot/
 | `BOT_TOKEN`        | ✅       | Discord bot token                                  |
 | `GUILD_ID`         | ✅       | Discord server (guild) ID                          |
 | `VOICE_CHANNEL_ID` | ❌       | Voice channel ID for auto-join on startup          |
-| `PORT`             | ❌       | HTTP server port (default: `8080`)                 |
+| `YTDLP_COOKIES_PATH`| ❌       | Path to YouTube cookies (e.g. `/etc/secrets/cookies.txt`)  |
+
+## Deploy to Render
+
+This bot is fully Dockerized and optimized for deployment on platforms like Render. The included `Dockerfile` automatically installs all necessary dependencies (`ffmpeg`, `python3`, `yt-dlp`, and `deno`) into the final image, ensuring smooth YouTube audio extraction.
+
+1. Create a new **Web Service** or **Background Worker** on Render connected to this repository.
+2. Select **Docker** as the Runtime environment.
+3. In the **Environment Variables** section, add your `BOT_TOKEN` and `GUILD_ID`.
+4. (Optional but recommended for YouTube) Create a **Secret File** on Render named `cookies.txt` and paste your YouTube cookies into it.
+5. Add an environment variable `YTDLP_COOKIES_PATH` and set its value to the path of your secret file (e.g., `/etc/secrets/cookies.txt`).
+6. Deploy! Render will build the image, install Deno/yt-dlp automatically, and start the bot.
 
 ## Deploy to Railway
 
