@@ -60,12 +60,13 @@ func (b *Bot) handlePlayCommand(event *events.MessageCreate, content string) {
 		queue.mu.Unlock()
 
 		track := Track{
-			Title:       result.Title,
-			Query:       result.Query,
-			Duration:    result.Duration,
-			Thumbnail:   result.Thumbnail,
-			Uploader:    result.Uploader,
-			RequestedBy: event.Message.Author.ID,
+			Title:         result.Title,
+			Query:         result.Query,
+			Duration:      result.Duration,
+			Thumbnail:     result.Thumbnail,
+			Uploader:      result.Uploader,
+			RequestedBy:   event.Message.Author.ID,
+			TextChannelID: event.ChannelID,
 		}
 		
 		queue.AddTrack(track)

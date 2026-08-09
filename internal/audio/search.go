@@ -90,17 +90,17 @@ func getTrackInfo(ctx context.Context, query string) (title, webpageURL, duratio
 	searchCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 
-	args := []string{
+	baseArgs := []string{
 		"--force-ipv4",
 		"--no-download",
 		"--ignore-no-formats-error", // IMPORTANT: Skip format extraction errors for YouTube
-		"--remote-components", "ejs:github", // Solve YouTube JS challenge
-		"--js-runtimes", "node", // Tell yt-dlp to explicitly use node
 		"--retries", "5",
 		"--print", "%(title)s\n%(webpage_url)s\n%(duration_string)s\n%(thumbnail)s\n%(uploader)s",
 		"--no-warnings",
 		"--no-playlist",
 	}
+
+	args := BuildYtDlpArgs(baseArgs)
 
 	args = append(args, query)
 	cmd := exec.CommandContext(searchCtx, "yt-dlp", args...)

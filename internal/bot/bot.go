@@ -3,8 +3,12 @@ package bot
 import (
 	"context"
 	"log"
+	"os/exec"
+	"strings"
 	"sync"
+	"time"
 
+	"bot-afk/internal/audio"
 	"bot-afk/internal/config"
 
 	"github.com/disgoorg/disgo"
@@ -50,6 +54,9 @@ func New(cfg *config.Config) *Bot {
 		Queues:         make(map[snowflake.ID]*GuildQueue),
 	}
 
+	// Initialize yt-dlp configuration for audio module
+	audio.InitYtDlpConfig(cfg.YtdlpCookiesPath, cfg.YtdlpJSRuntimePath)
+
 	client, err := disgo.New(cfg.BotToken,
 		disgobot.WithGatewayConfigOpts(
 			gateway.WithIntents(
@@ -83,10 +90,34 @@ func New(cfg *config.Config) *Bot {
 
 // Start opens the gateway connection to Discord.
 func (b *Bot) Start() {
+	b.checkYtDlpVersion()
+
 	if err := b.Client.OpenGateway(context.TODO()); err != nil {
 		log.Fatalf("[BOT] Error opening gateway: %v", err)
 	}
 	log.Println("[BOT] Gateway connection opened.")
+}
+
+// checkYtDlpVersion verifies if the installed yt-dlp is older than 30 days
+func (b *Bot) checkYtDlpVersion() {
+	out, err := exec.Command("yt-dlp", "--version").Output()
+	if err != nil {
+		log.Printf("[WARNING] Could not check yt-dlp version: %v", err)
+		return
+	}
+	
+	versionStr := strings.TrimSpace(string(out))
+	// yt-dlp version format is typically YYYY.MM.DD (e.g., 2024.08.06)
+	parsedDate, err := time.Parse("2006.01.02", versionStr)
+	if err == nil {
+		if time.Since(parsedDate).Hours() > 24 * 30 {
+			log.Printf("[WARNING] yt-dlp version (%s) is older than 30 days! Please update using 'yt-dlp -U' to prevent YouTube extraction errors.", versionStr)
+		} else {
+			log.Printf("[BOT] yt-dlp version %s is up-to-date.", versionStr)
+		}
+	} else {
+		log.Printf("[BOT] yt-dlp version string '%s' could not be parsed as date, skipping check.", versionStr)
+	}
 }
 
 // Stop gracefully closes the Discord connection.

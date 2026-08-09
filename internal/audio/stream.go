@@ -82,16 +82,16 @@ func NewStream(query string) (*StreamProvider, error) {
 	// Step 1: Download the audio file using yt-dlp
 	tmpPrefix := filepath.Join(os.TempDir(), fmt.Sprintf("afk_audio_%d", time.Now().UnixNano()))
 
-	args := []string{
+	baseArgs := []string{
 		"--force-ipv4",
 		"-f", "bestaudio",
-		"--remote-components", "ejs:github", // Solve YouTube JS challenge
-		"--js-runtimes", "node", // Tell yt-dlp to explicitly use node
 		"--retries", "5",
 		"--fragment-retries", "5",
 		"-o", tmpPrefix + ".%(ext)s",
 		"--no-playlist",
 	}
+
+	args := BuildYtDlpArgs(baseArgs)
 
 	args = append(args, query)
 	ytCmd := exec.Command("yt-dlp", args...)

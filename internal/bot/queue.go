@@ -2,13 +2,16 @@ package bot
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
 	"bot-afk/internal/audio"
 
+	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/voice"
 	"github.com/disgoorg/snowflake/v2"
 )
@@ -18,8 +21,9 @@ type Track struct {
 	Query       string // yt-dlp compatible query (e.g. "ytsearch:xxx" or direct URL)
 	Duration    string
 	Thumbnail   string
-	Uploader    string
-	RequestedBy snowflake.ID
+	Uploader      string
+	RequestedBy   snowflake.ID
+	TextChannelID snowflake.ID
 }
 
 type GuildQueue struct {
@@ -71,10 +75,29 @@ func (q *GuildQueue) PlayNext() {
 	q.cancelPlay = cancel
 
 	log.Printf("[AFK-BOT] [QUEUE] Starting playback: %s in guild %s", track.Title, q.GuildID)
-	go q.playRoutine(ctx, track)
+	go q.playRoutine(ctx, track, 0)
 }
 
-func (q *GuildQueue) playRoutine(ctx context.Context, track Track) {
+func (q *GuildQueue) onTrackError(track Track, err error) {
+	log.Printf("[AFK-BOT] [QUEUE] Track failed: %s in guild %s, error: %v", track.Title, q.GuildID, err)
+	
+	errMsg := "Gagal memutar lagu tersebut karena kesalahan sistem."
+	errStr := err.Error()
+	if strings.Contains(errStr, "Sign in to confirm you") || strings.Contains(errStr, "Signature solving failed") {
+		errMsg = "⚠️ **YouTube memblokir permintaan!** YouTube meminta verifikasi login/cookies.\nSaran: Hapus cookies dari server atau gunakan sumber lagu lain."
+	}
+
+	if track.TextChannelID != 0 {
+		_, _ = q.Bot.Client.Rest.CreateMessage(track.TextChannelID, discord.MessageCreate{
+			Embeds: []discord.Embed{buildEmbed("❌ Gagal Memutar", fmt.Sprintf("Gagal memutar **%s**\n%s", track.Title, errMsg), 0xff0000)},
+		})
+	}
+}
+
+func (q *GuildQueue) playRoutine(ctx context.Context, track Track, retryCount int) {
+	var trackFailed bool
+	var streamErr error
+
 	defer func() {
 		q.mu.Lock()
 		q.isPlaying = false
@@ -85,17 +108,38 @@ func (q *GuildQueue) playRoutine(ctx context.Context, track Track) {
 		}
 		q.mu.Unlock()
 
-		log.Printf("[AFK-BOT] [QUEUE] Track finished: %s in guild %s", track.Title, q.GuildID)
+		if trackFailed {
+			q.onTrackError(track, streamErr)
+		} else {
+			log.Printf("[AFK-BOT] [QUEUE] Track finished: %s in guild %s", track.Title, q.GuildID)
+		}
 		// Play next automatically
 		q.PlayNext()
 	}()
 
-	log.Printf("[AFK-BOT] [QUEUE] Creating audio stream for: %s", track.Title)
+	log.Printf("[AFK-BOT] [QUEUE] Creating audio stream for: %s (attempt %d)", track.Title, retryCount+1)
 
 	// Create the audio stream (this calls yt-dlp -> ffmpeg -> opus)
 	stream, err := audio.NewStream(track.Query)
 	if err != nil {
+		streamErr = err
 		log.Printf("[AFK-BOT] [QUEUE] ERROR creating audio stream for '%s': %v", track.Title, err)
+		
+		errStr := err.Error()
+		if retryCount < 1 && !strings.Contains(errStr, "Sign in to confirm you") && !strings.Contains(errStr, "Signature solving failed") {
+			log.Printf("[AFK-BOT] [QUEUE] Retrying '%s' due to network error...", track.Title)
+			q.mu.Lock()
+			q.isPlaying = false
+			q.CurrentTrack = nil
+			q.mu.Unlock()
+			go q.playRoutine(ctx, track, retryCount+1)
+			
+			// Defuse the defer logic for this frame since the retry goroutine takes over
+			trackFailed = false
+			return 
+		}
+
+		trackFailed = true
 		return
 	}
 

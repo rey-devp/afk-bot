@@ -9,8 +9,10 @@ import (
 )
 
 type Config struct {
-	BotToken string
-	Port     string
+	BotToken           string
+	Port               string
+	YtdlpCookiesPath   string
+	YtdlpJSRuntimePath string
 }
 
 // Load reads environment variables (and .env file if present) and returns a Config.
@@ -29,8 +31,10 @@ func Load() *Config {
 	botToken = strings.TrimPrefix(botToken, "Bot ") // Remove Bot prefix if any
 
 	cfg := &Config{
-		BotToken: botToken,
-		Port:     port,
+		BotToken:           botToken,
+		Port:               port,
+		YtdlpCookiesPath:   os.Getenv("YTDLP_COOKIES_PATH"),
+		YtdlpJSRuntimePath: os.Getenv("YTDLP_JS_RUNTIME_PATH"),
 	}
 
 	if cfg.BotToken == "" {
