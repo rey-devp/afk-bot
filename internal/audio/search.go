@@ -84,6 +84,34 @@ func Search(ctx context.Context, guildID, query string) (*SearchResult, error) {
 	}, nil
 }
 
+// SearchMany finds multiple tracks (up to limit) and returns them as a slice of SearchResults.
+func SearchMany(ctx context.Context, guildID, query string, limit int) ([]SearchResult, error) {
+	isURL := strings.HasPrefix(query, "http://") || strings.HasPrefix(query, "https://")
+
+	// If it's a direct URL or Spotify URL, we fallback to just returning the single item
+	if isURL {
+		res, err := Search(ctx, guildID, query)
+		if err != nil {
+			return nil, err
+		}
+		return []SearchResult{*res}, nil
+	}
+
+	log.Printf("[AFK-BOT] [%s] [AUDIO] Searching YouTube Video (Multiple): %s", guildID, query)
+	results, err := getTrackInfoMany(ctx, guildID, fmt.Sprintf("ytsearch%d:%s", limit, query))
+	
+	if err != nil {
+		log.Printf("[AFK-BOT] [%s] [AUDIO] YouTube Video multiple search failed (%v). Falling back to SoundCloud...", guildID, err)
+		scResults, scErr := getTrackInfoMany(ctx, guildID, fmt.Sprintf("scsearch%d:%s", limit, query))
+		if scErr == nil && len(scResults) > 0 {
+			return scResults, nil
+		}
+		return nil, fmt.Errorf("failed to find tracks on all platforms: %w", scErr)
+	}
+
+	return results, nil
+}
+
 // getTrackInfo extracts the metadata from yt-dlp without downloading.
 func getTrackInfo(ctx context.Context, guildID, query string) (title, webpageURL, duration, thumbnail, uploader string, err error) {
 	// Add a 45-second timeout for the search so it doesn't hang forever, but gives yt-dlp enough time to parse cookies
@@ -134,4 +162,66 @@ func getTrackInfo(ctx context.Context, guildID, query string) (title, webpageURL
 		return "", "", "", "", "", fmt.Errorf("yt-dlp returned empty title or URL")
 	}
 	return title, webpageURL, duration, thumbnail, uploader, nil
+}
+
+// getTrackInfoMany extracts metadata for multiple tracks using a safe delimiter.
+func getTrackInfoMany(ctx context.Context, guildID, query string) ([]SearchResult, error) {
+	searchCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+
+	baseArgs := []string{
+		"--force-ipv4",
+		"--no-download",
+		"--ignore-no-formats-error",
+		"--retries", "5",
+		"--print", "%(title)s|||%(webpage_url)s|||%(duration_string)s|||%(thumbnail)s|||%(uploader)s",
+		"--no-warnings",
+		"--no-playlist",
+	}
+
+	args := BuildYtDlpArgs(guildID, baseArgs)
+	args = append(args, query)
+	
+	cmd := exec.CommandContext(searchCtx, "yt-dlp", args...)
+	out, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			log.Printf("[AFK-BOT] [%s] [AUDIO] yt-dlp search error: %s", guildID, string(exitErr.Stderr))
+		}
+		return nil, err
+	}
+
+	var results []SearchResult
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		
+		parts := strings.Split(line, "|||")
+		if len(parts) >= 2 {
+			res := SearchResult{
+				Title: strings.TrimSpace(parts[0]),
+				Query: strings.TrimSpace(parts[1]),
+			}
+			
+			if len(parts) >= 5 {
+				res.Duration = strings.TrimSpace(parts[2])
+				res.Thumbnail = strings.TrimSpace(parts[3])
+				res.Uploader = strings.TrimSpace(parts[4])
+			}
+			
+			if res.Title != "" && res.Query != "" {
+				results = append(results, res)
+			}
+		}
+	}
+	
+	if len(results) == 0 {
+		return nil, fmt.Errorf("no results found")
+	}
+	
+	return results, nil
 }

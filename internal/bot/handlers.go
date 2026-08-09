@@ -2,7 +2,9 @@ package bot
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,6 +36,43 @@ func (b *Bot) onMessageCreate(event *events.MessageCreate) {
 	}
 
 	content := strings.TrimSpace(event.Message.Content)
+
+	// Process interactive search selections
+	if len(content) > 0 && len(content) <= 2 { // Number 1-10
+		b.mu.Lock()
+		pending, exists := b.PendingSearches[event.ChannelID]
+		b.mu.Unlock()
+
+		if exists {
+			// Check if expired
+			if time.Now().After(pending.ExpiresAt) {
+				b.mu.Lock()
+				delete(b.PendingSearches, event.ChannelID)
+				b.mu.Unlock()
+			} else if pending.UserID == event.Message.Author.ID {
+				// Parse number
+				if selection, err := strconv.Atoi(content); err == nil && selection >= 1 && selection <= len(pending.Results) {
+					// Valid selection! Play this track.
+					b.mu.Lock()
+					delete(b.PendingSearches, event.ChannelID)
+					b.mu.Unlock()
+
+					selectedResult := pending.Results[selection-1]
+					
+					// Delete the user's message
+					_ = b.Client.Rest.DeleteMessage(event.ChannelID, event.Message.ID)
+
+					// Send a processing message
+					msg, _ := b.Client.Rest.CreateMessage(event.ChannelID, discord.MessageCreate{
+						Embeds: []discord.Embed{buildEmbed("🔄 Memproses", fmt.Sprintf("Lagu terpilih: **%s**", selectedResult.Title), 0x3498db)},
+					})
+
+					b.queueTrack(event, msg, selectedResult)
+					return
+				}
+			}
+		}
+	}
 
 	if strings.HasPrefix(content, "!join") {
 		b.handleJoinCommand(event, content)

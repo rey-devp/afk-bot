@@ -20,13 +20,21 @@ import (
 	"github.com/disgoorg/snowflake/v2"
 )
 
+// PendingSearch holds results for search commands awaiting user selection
+type PendingSearch struct {
+	UserID    snowflake.ID
+	Results   []audio.SearchResult
+	ExpiresAt time.Time
+}
+
 // Bot holds the DisGo client, configuration, and multi-guild state.
 type Bot struct {
-	Client         *disgobot.Client
-	Config         *config.Config
-	ActiveChannels map[snowflake.ID]snowflake.ID
-	Queues         map[snowflake.ID]*GuildQueue
-	mu             sync.RWMutex
+	Client          *disgobot.Client
+	Config          *config.Config
+	ActiveChannels  map[snowflake.ID]snowflake.ID
+	Queues          map[snowflake.ID]*GuildQueue
+	PendingSearches map[snowflake.ID]*PendingSearch
+	mu              sync.RWMutex
 }
 
 // GetQueue returns the music queue for the given guild.
@@ -49,9 +57,10 @@ func (b *Bot) GetQueue(guildID snowflake.ID) *GuildQueue {
 // New creates and configures a new Bot instance.
 func New(cfg *config.Config) *Bot {
 	b := &Bot{
-		Config:         cfg,
-		ActiveChannels: make(map[snowflake.ID]snowflake.ID),
-		Queues:         make(map[snowflake.ID]*GuildQueue),
+		Config:          cfg,
+		ActiveChannels:  make(map[snowflake.ID]snowflake.ID),
+		Queues:          make(map[snowflake.ID]*GuildQueue),
+		PendingSearches: make(map[snowflake.ID]*PendingSearch),
 	}
 
 	// Initialize yt-dlp configuration for audio module
