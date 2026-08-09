@@ -21,28 +21,28 @@ type SearchResult struct {
 
 // Search finds a track using yt-dlp but does NOT download it.
 // It returns the title, URL, and metadata (which yt-dlp can use to extract media later).
-func Search(ctx context.Context, query string) (*SearchResult, error) {
+func Search(ctx context.Context, guildID, query string) (*SearchResult, error) {
 	isURL := strings.HasPrefix(query, "http://") || strings.HasPrefix(query, "https://")
 
 	if isURL {
 		if strings.Contains(query, "spotify.com") {
-			log.Printf("[AFK-BOT] [AUDIO] Detected Spotify URL, extracting metadata via yt-dlp...")
+			log.Printf("[AFK-BOT] [%s] [AUDIO] Detected Spotify URL, extracting metadata via yt-dlp...", guildID)
 			// yt-dlp can extract metadata from Spotify (but cannot download audio).
-			title, _, _, _, uploader, err := getTrackInfo(ctx, query)
+			title, _, _, _, uploader, err := getTrackInfo(ctx, guildID, query)
 			if err == nil && title != "" {
 				scQuery := title
 				if uploader != "" && uploader != "NA" {
 					scQuery = uploader + " " + title
 				}
-				log.Printf("[AFK-BOT] [AUDIO] Converted Spotify URL to SoundCloud search: %s", scQuery)
+				log.Printf("[AFK-BOT] [%s] [AUDIO] Converted Spotify URL to SoundCloud search: %s", guildID, scQuery)
 				// Recursively search SoundCloud using the extracted metadata
-				return Search(ctx, scQuery)
+				return Search(ctx, guildID, scQuery)
 			}
-			log.Printf("[AFK-BOT] [AUDIO] Failed to extract Spotify metadata: %v. Proceeding with raw URL...", err)
+			log.Printf("[AFK-BOT] [%s] [AUDIO] Failed to extract Spotify metadata: %v. Proceeding with raw URL...", guildID, err)
 		}
 
 		// For direct URLs, just get the title
-		title, _, duration, thumb, uploader, err := getTrackInfo(ctx, query)
+		title, _, duration, thumb, uploader, err := getTrackInfo(ctx, guildID, query)
 		if err != nil {
 			return nil, err
 		}
@@ -52,18 +52,18 @@ func Search(ctx context.Context, query string) (*SearchResult, error) {
 	}
 
 	// 1. Attempt YouTube Video search first
-	log.Printf("[AFK-BOT] [AUDIO] Searching YouTube Video: %s", query)
-	title, webpageURL, duration, thumb, uploader, err := getTrackInfo(ctx, fmt.Sprintf("ytsearch1:%s", query))
+	log.Printf("[AFK-BOT] [%s] [AUDIO] Searching YouTube Video: %s", guildID, query)
+	title, webpageURL, duration, thumb, uploader, err := getTrackInfo(ctx, guildID, fmt.Sprintf("ytsearch1:%s", query))
 
 	// If YouTube Video fails, fallback to SoundCloud
 	if err != nil {
-		log.Printf("[AFK-BOT] [AUDIO] YouTube Video failed (%v). Falling back to SoundCloud...", err)
-		scTitle, scURL, scDur, scThumb, scUploader, scErr := getTrackInfo(ctx, fmt.Sprintf("scsearch:%s", query))
+		log.Printf("[AFK-BOT] [%s] [AUDIO] YouTube Video failed (%v). Falling back to SoundCloud...", guildID, err)
+		scTitle, scURL, scDur, scThumb, scUploader, scErr := getTrackInfo(ctx, guildID, fmt.Sprintf("scsearch:%s", query))
 		
 		if scErr == nil {
 			// Check for 30s preview
 			if scDur == "0:30" || scDur == "00:30" || scDur == "30" {
-				log.Printf("[AFK-BOT] [AUDIO] SoundCloud returned 30s preview as last resort")
+				log.Printf("[AFK-BOT] [%s] [AUDIO] SoundCloud returned 30s preview as last resort", guildID)
 				return &SearchResult{
 					Title: scTitle + " (30s Preview)", Query: scURL, Duration: scDur, Thumbnail: scThumb, Uploader: scUploader,
 				}, nil
@@ -85,7 +85,7 @@ func Search(ctx context.Context, query string) (*SearchResult, error) {
 }
 
 // getTrackInfo extracts the metadata from yt-dlp without downloading.
-func getTrackInfo(ctx context.Context, query string) (title, webpageURL, duration, thumbnail, uploader string, err error) {
+func getTrackInfo(ctx context.Context, guildID, query string) (title, webpageURL, duration, thumbnail, uploader string, err error) {
 	// Add a 45-second timeout for the search so it doesn't hang forever, but gives yt-dlp enough time to parse cookies
 	searchCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
@@ -100,7 +100,7 @@ func getTrackInfo(ctx context.Context, query string) (title, webpageURL, duratio
 		"--no-playlist",
 	}
 
-	args := BuildYtDlpArgs(baseArgs)
+	args := BuildYtDlpArgs(guildID, baseArgs)
 
 	args = append(args, query)
 	cmd := exec.CommandContext(searchCtx, "yt-dlp", args...)
@@ -108,7 +108,7 @@ func getTrackInfo(ctx context.Context, query string) (title, webpageURL, duratio
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			log.Printf("[AFK-BOT] [AUDIO] yt-dlp search error: %s", string(exitErr.Stderr))
+			log.Printf("[AFK-BOT] [%s] [AUDIO] yt-dlp search error: %s", guildID, string(exitErr.Stderr))
 		}
 		return "", "", "", "", "", err
 	}

@@ -65,7 +65,7 @@ func InitYtDlpConfig(cookiesPath, jsRuntime string) {
 }
 
 // BuildYtDlpArgs constructs the arguments for yt-dlp including runtime and cookies.
-func BuildYtDlpArgs(baseArgs []string) []string {
+func BuildYtDlpArgs(guildID string, baseArgs []string) []string {
 	args := append([]string(nil), baseArgs...)
 
 	// Always add ejs remote component to solve challenges
@@ -78,13 +78,13 @@ func BuildYtDlpArgs(baseArgs []string) []string {
 	if ytdlpCookiesPath != "" {
 		if stat, err := os.Stat(ytdlpCookiesPath); err == nil && stat.Size() > 0 {
 			args = append(args, "--cookies", ytdlpCookiesPath)
-			log.Printf("[AFK-BOT] [AUDIO] Using cookies from: %s", ytdlpCookiesPath)
+			log.Printf("[AFK-BOT] [%s] [AUDIO] Using cookies from: %s", guildID, ytdlpCookiesPath)
 		} else {
-			log.Printf("[AFK-BOT] [AUDIO] Warning: Cookie file '%s' not found or empty, running without cookies.", ytdlpCookiesPath)
+			log.Printf("[AFK-BOT] [%s] [AUDIO] Warning: Cookie file '%s' not found or empty, running without cookies.", guildID, ytdlpCookiesPath)
 		}
 	}
 
 
-	log.Printf("[AFK-BOT] [AUDIO] Running yt-dlp with args: %v", args)
+	log.Printf("[AFK-BOT] [%s] [AUDIO] Running yt-dlp with args: %v", guildID, args)
 	return args
 }

@@ -76,8 +76,8 @@ func (p *StreamProvider) WaitDone() <-chan error {
 // NewStream creates a new audio stream by:
 // 1. Downloading the audio using yt-dlp to a temporary file
 // 2. Using dca to accurately encode the file to Opus frames
-func NewStream(query string) (*StreamProvider, error) {
-	log.Printf("[AFK-BOT] [AUDIO] Starting download for URL: %s", query)
+func NewStream(guildID string, query string) (*StreamProvider, error) {
+	log.Printf("[AFK-BOT] [%s] [AUDIO] Starting download for URL: %s", guildID, query)
 
 	// Step 1: Download the audio file using yt-dlp
 	tmpPrefix := filepath.Join(os.TempDir(), fmt.Sprintf("afk_audio_%d", time.Now().UnixNano()))
@@ -91,12 +91,12 @@ func NewStream(query string) (*StreamProvider, error) {
 		"--no-playlist",
 	}
 
-	args := BuildYtDlpArgs(baseArgs)
+	args := BuildYtDlpArgs(guildID, baseArgs)
 
 	args = append(args, query)
 	ytCmd := exec.Command("yt-dlp", args...)
 
-	log.Println("[AFK-BOT] [AUDIO] Downloading audio file...")
+	log.Printf("[AFK-BOT] [%s] [AUDIO] Downloading audio file...", guildID)
 	out, err := ytCmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("failed to download audio: %w, output: %s", err, string(out))
@@ -116,7 +116,7 @@ func NewStream(query string) (*StreamProvider, error) {
 		os.Remove(downloadedFile)
 		return nil, fmt.Errorf("downloaded file is empty or unreadable")
 	}
-	log.Printf("[AFK-BOT] [AUDIO] Successfully downloaded to %s (%d bytes)", downloadedFile, stat.Size())
+	log.Printf("[AFK-BOT] [%s] [AUDIO] Successfully downloaded to %s (%d bytes)", guildID, downloadedFile, stat.Size())
 
 	// Step 2: Start ffmpeg to output OGG/Opus format for Discord
 	// Discord requires: Opus codec, 48kHz, stereo
@@ -148,7 +148,7 @@ func NewStream(query string) (*StreamProvider, error) {
 		return nil, fmt.Errorf("failed to create ffmpeg stdout pipe: %w", err)
 	}
 
-	log.Println("[AFK-BOT] [AUDIO] Starting ffmpeg encode (OGG/Opus)...")
+	log.Printf("[AFK-BOT] [%s] [AUDIO] Starting ffmpeg encode (OGG/Opus)...", guildID)
 	if err := ffmpegCmd.Start(); err != nil {
 		os.Remove(downloadedFile)
 		return nil, fmt.Errorf("failed to start ffmpeg: %w", err)
@@ -169,12 +169,12 @@ func NewStream(query string) (*StreamProvider, error) {
 	go func() {
 		err := ffmpegCmd.Wait()
 		if err != nil {
-			log.Printf("[AUDIO] ffmpeg process exited with error: %v", err)
+			log.Printf("[AFK-BOT] [%s] [AUDIO] ffmpeg process exited with error: %v", guildID, err)
 		} else {
-			log.Println("[AUDIO] ffmpeg process completed successfully")
+			log.Printf("[AFK-BOT] [%s] [AUDIO] ffmpeg process completed successfully", guildID)
 		}
 	}()
 
-	log.Println("[AUDIO] Stream pipeline ready!")
+	log.Printf("[AFK-BOT] [%s] [AUDIO] Stream pipeline ready!", guildID)
 	return provider, nil
 }

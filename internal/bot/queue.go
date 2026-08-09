@@ -120,14 +120,20 @@ func (q *GuildQueue) playRoutine(ctx context.Context, track Track, retryCount in
 	log.Printf("[AFK-BOT] [QUEUE] Creating audio stream for: %s (attempt %d)", track.Title, retryCount+1)
 
 	// Create the audio stream (this calls yt-dlp -> ffmpeg -> opus)
-	stream, err := audio.NewStream(track.Query)
+	stream, err := audio.NewStream(q.GuildID.String(), track.Query)
 	if err != nil {
 		streamErr = err
 		log.Printf("[AFK-BOT] [QUEUE] ERROR creating audio stream for '%s': %v", track.Title, err)
 		
 		errStr := err.Error()
-		if retryCount < 1 && !strings.Contains(errStr, "Sign in to confirm you") && !strings.Contains(errStr, "Signature solving failed") {
-			log.Printf("[AFK-BOT] [QUEUE] Retrying '%s' due to network error...", track.Title)
+		if retryCount < 1 {
+			if !strings.Contains(errStr, "Sign in to confirm you") && !strings.Contains(errStr, "Signature solving failed") && !strings.Contains(errStr, "Requested format is not available") {
+				log.Printf("[AFK-BOT] [QUEUE] Retrying '%s' due to network error...", track.Title)
+			} else {
+				log.Printf("[AFK-BOT] [QUEUE] YouTube blocked download for '%s'. Falling back to SoundCloud...", track.Title)
+				track.Query = "scsearch:" + track.Title // Use SoundCloud for the next attempt
+			}
+			
 			q.mu.Lock()
 			q.isPlaying = false
 			q.CurrentTrack = nil

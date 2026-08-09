@@ -33,8 +33,8 @@ func (b *Bot) handlePlayCommand(event *events.MessageCreate, content string) {
 
 	// We run this in a goroutine because yt-dlp might take a few seconds
 	go func() {
-		log.Printf("[AFK-BOT] [PLAY] Searching for: %s", query)
-		result, err := audio.Search(context.Background(), query)
+		log.Printf("[AFK-BOT] [%s] [PLAY] Searching for: %s", event.Message.GuildID.String(), query)
+		result, err := audio.Search(context.Background(), event.Message.GuildID.String(), query)
 		if err != nil {
 			log.Printf("[AFK-BOT] [PLAY] Search failed for '%s': %v", query, err)
 
