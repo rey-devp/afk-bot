@@ -55,8 +55,12 @@ RUN touch /app/cookies.txt
 FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libstdc++6 ffmpeg curl python3 python3-pip unzip \
+    ca-certificates libstdc++6 ffmpeg curl python3 python3-pip unzip git \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 20.x
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y nodejs
 
 # Install Deno
 RUN curl -fsSL https://deno.land/install.sh | sh -s -- -y
@@ -65,6 +69,15 @@ ENV PATH="${DENO_INSTALL}/bin:${PATH}"
 
 # Install yt-dlp via pip (always gets the latest release/nightly)
 RUN pip install --break-system-packages -U https://github.com/yt-dlp/yt-dlp/archive/master.zip
+
+# Install PO Token Provider server
+RUN git clone --single-branch --branch 1.3.1 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /opt/bgutil-provider && \
+    cd /opt/bgutil-provider/server && \
+    npm ci && \
+    npx tsc
+
+# Install plugin Python untuk yt-dlp
+RUN pip install --break-system-packages -U bgutil-ytdlp-pot-provider
 
 WORKDIR /root/
 
@@ -82,4 +95,6 @@ RUN deno --version && yt-dlp --version && ffmpeg -version
 
 EXPOSE 8080
 
-CMD ["./bot-afk"]
+COPY start.sh /root/start.sh
+RUN chmod +x /root/start.sh
+ENTRYPOINT ["/root/start.sh"]

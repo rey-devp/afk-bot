@@ -3,9 +3,11 @@ package audio
 import (
 	"encoding/base64"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 var (
@@ -62,6 +64,23 @@ func InitYtDlpConfig(cookiesPath, jsRuntime string) {
 	} else {
 		log.Printf("[AFK-BOT] [STARTUP-INFO] JS Runtime '%s' detected at: %s", runtimeBinary, path)
 	}
+
+	// 3. Startup check for PO Token Provider
+	go checkPOTokenProvider()
+}
+
+func checkPOTokenProvider() {
+	// Give the provider server a moment to spin up
+	time.Sleep(2 * time.Second)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get("http://127.0.0.1:4416/ping")
+	if err != nil {
+		log.Printf("[AFK-BOT] [STARTUP-WARNING] PO Token provider not reachable at 127.0.0.1:4416: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+	log.Printf("[AFK-BOT] [STARTUP-INFO] PO Token provider reachable at 127.0.0.1:4416")
 }
 
 // BuildYtDlpArgs constructs the arguments for yt-dlp including runtime and cookies.
