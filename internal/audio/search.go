@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -100,14 +99,6 @@ func getTrackInfo(ctx context.Context, query string) (title, webpageURL, duratio
 		"--print", "%(title)s\n%(webpage_url)s\n%(duration_string)s\n%(thumbnail)s\n%(uploader)s",
 		"--no-warnings",
 		"--no-playlist",
-	}
-
-	if stat, err := os.Stat("www.youtube.com_cookies.txt"); err == nil && stat.Size() > 0 {
-		args = append(args, "--cookies", "www.youtube.com_cookies.txt")
-		log.Printf("[AFK-BOT] [AUDIO] Using www.youtube.com_cookies.txt for search...")
-	} else if stat, err := os.Stat("cookies.txt"); err == nil && stat.Size() > 0 {
-		args = append(args, "--cookies", "cookies.txt")
-		log.Printf("[AFK-BOT] [AUDIO] Using cookies.txt for search...")
 	}
 
 	args = append(args, query)
