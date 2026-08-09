@@ -27,7 +27,10 @@ func JoinVoiceChannel(b *Bot, guildID snowflake.ID, channelID snowflake.ID) {
 			cancel()
 
 			if err == nil {
-				log.Printf("[AFK-BOT] [VOICE] Joined voice channel %s successfully", channelID)
+				log.Printf("[AFK-BOT] [VOICE] Joined voice channel %s successfully. Waiting for DAVE key negotiation...", channelID)
+				
+				// Allow background goroutines to finish DAVE E2EE key exchange (missing key ratchet fix)
+				time.Sleep(1 * time.Second)
 				
 				// Attach the silence provider so the bot keeps sending empty Opus frames
 				conn.SetOpusFrameProvider(&audio.SilenceProvider{})

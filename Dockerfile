@@ -55,7 +55,7 @@ RUN touch /app/cookies.txt
 FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libstdc++6 ffmpeg curl python3 \
+    ca-certificates libstdc++6 ffmpeg curl python3 nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
