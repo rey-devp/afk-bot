@@ -85,6 +85,7 @@ func NewStream(query string) (*StreamProvider, error) {
 	args := []string{
 		"--force-ipv4",
 		"-f", "bestaudio",
+		"--remote-components", "ejs:github", // Solve YouTube JS challenge
 		"--retries", "5",
 		"--fragment-retries", "5",
 		"-o", tmpPrefix + ".%(ext)s",

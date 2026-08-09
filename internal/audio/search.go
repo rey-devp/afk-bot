@@ -52,29 +52,19 @@ func Search(ctx context.Context, query string) (*SearchResult, error) {
 		}, nil
 	}
 
-	// 1. Attempt YouTube Music search first
-	log.Printf("[AFK-BOT] [AUDIO] Searching YouTube Music: %s", query)
-	title, webpageURL, duration, thumb, uploader, err := getTrackInfo(ctx, fmt.Sprintf("ytmsearch1:%s", query))
+	// 1. Attempt YouTube Video search first
+	log.Printf("[AFK-BOT] [AUDIO] Searching YouTube Video: %s", query)
+	title, webpageURL, duration, thumb, uploader, err := getTrackInfo(ctx, fmt.Sprintf("ytsearch1:%s", query))
 
-	// If YouTube Music fails, fallback to SoundCloud
+	// If YouTube Video fails, fallback to SoundCloud
 	if err != nil {
-		log.Printf("[AFK-BOT] [AUDIO] YouTube Music failed (%v). Falling back to SoundCloud...", err)
+		log.Printf("[AFK-BOT] [AUDIO] YouTube Video failed (%v). Falling back to SoundCloud...", err)
 		scTitle, scURL, scDur, scThumb, scUploader, scErr := getTrackInfo(ctx, fmt.Sprintf("scsearch:%s", query))
 		
 		if scErr == nil {
 			// Check for 30s preview
 			if scDur == "0:30" || scDur == "00:30" || scDur == "30" {
-				log.Printf("[AFK-BOT] [AUDIO] SoundCloud returned 30s preview. Falling back to YouTube Video...")
-				
-				ytTitle, ytURL, ytDur, ytThumb, ytUploader, ytErr := getTrackInfo(ctx, fmt.Sprintf("ytsearch1:%s", query))
-				if ytErr == nil {
-					return &SearchResult{
-						Title: ytTitle, Query: ytURL, Duration: ytDur, Thumbnail: ytThumb, Uploader: ytUploader,
-					}, nil
-				}
-				
-				log.Printf("[AFK-BOT] [AUDIO] YouTube Video fallback failed: %v", ytErr)
-				log.Printf("[AFK-BOT] [AUDIO] Using 30s preview as last resort")
+				log.Printf("[AFK-BOT] [AUDIO] SoundCloud returned 30s preview as last resort")
 				return &SearchResult{
 					Title: scTitle + " (30s Preview)", Query: scURL, Duration: scDur, Thumbnail: scThumb, Uploader: scUploader,
 				}, nil
@@ -86,7 +76,7 @@ func Search(ctx context.Context, query string) (*SearchResult, error) {
 			}, nil
 		}
 
-		// Both YouTube Music and SoundCloud failed
+		// Both YouTube Video and SoundCloud failed
 		return nil, fmt.Errorf("failed to find track on all platforms: %w", scErr)
 	}
 
@@ -105,6 +95,7 @@ func getTrackInfo(ctx context.Context, query string) (title, webpageURL, duratio
 		"--force-ipv4",
 		"--no-download",
 		"--ignore-no-formats-error", // IMPORTANT: Skip format extraction errors for YouTube
+		"--remote-components", "ejs:github", // Solve YouTube JS challenge
 		"--retries", "5",
 		"--print", "%(title)s\n%(webpage_url)s\n%(duration_string)s\n%(thumbnail)s\n%(uploader)s",
 		"--no-warnings",
