@@ -86,6 +86,7 @@ func NewStream(query string) (*StreamProvider, error) {
 		"--force-ipv4",
 		"-f", "bestaudio",
 		"--remote-components", "ejs:github", // Solve YouTube JS challenge
+		"--js-runtimes", "nodejs", // Tell yt-dlp to explicitly use nodejs
 		"--retries", "5",
 		"--fragment-retries", "5",
 		"-o", tmpPrefix + ".%(ext)s",

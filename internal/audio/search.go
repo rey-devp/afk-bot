@@ -95,6 +95,7 @@ func getTrackInfo(ctx context.Context, query string) (title, webpageURL, duratio
 		"--no-download",
 		"--ignore-no-formats-error", // IMPORTANT: Skip format extraction errors for YouTube
 		"--remote-components", "ejs:github", // Solve YouTube JS challenge
+		"--js-runtimes", "nodejs", // Tell yt-dlp to explicitly use nodejs
 		"--retries", "5",
 		"--print", "%(title)s\n%(webpage_url)s\n%(duration_string)s\n%(thumbnail)s\n%(uploader)s",
 		"--no-warnings",
