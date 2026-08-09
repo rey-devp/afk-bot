@@ -3,7 +3,7 @@ package audio
 import (
 	"encoding/base64"
 	"log"
-	"net/http"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
@@ -73,17 +73,24 @@ func InitYtDlpConfig(cookiesPath, jsRuntime string) {
 }
 
 func checkPOTokenProvider() {
-	// Give the provider server a moment to spin up
-	time.Sleep(2 * time.Second)
+	const maxAttempts = 10
+	const retryDelay = 1 * time.Second
 
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get("http://127.0.0.1:4416/ping")
-	if err != nil {
-		log.Printf("[AFK-BOT] [STARTUP-WARNING] PO Token provider not reachable at 127.0.0.1:4416: %v", err)
-		return
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		conn, err := net.DialTimeout("tcp", "127.0.0.1:4416", 2*time.Second)
+		if err == nil {
+			conn.Close()
+			log.Printf("[AFK-BOT] [STARTUP-INFO] PO Token provider reachable at 127.0.0.1:4416 (attempt %d/%d)", attempt, maxAttempts)
+			return
+		}
+
+		if attempt < maxAttempts {
+			log.Printf("[AFK-BOT] [STARTUP-INFO] PO Token provider not ready yet (attempt %d/%d), retrying in %v...", attempt, maxAttempts, retryDelay)
+			time.Sleep(retryDelay)
+		} else {
+			log.Printf("[AFK-BOT] [STARTUP-WARNING] PO Token provider still not reachable after %d attempts: %v", maxAttempts, err)
+		}
 	}
-	defer resp.Body.Close()
-	log.Printf("[AFK-BOT] [STARTUP-INFO] PO Token provider reachable at 127.0.0.1:4416")
 }
 
 func checkPOTokenPlugin() {
