@@ -128,7 +128,7 @@ func getTrackInfo(ctx context.Context, guildID, query string) (title, webpageURL
 		"--no-playlist",
 	}
 
-	args := BuildYtDlpArgs(guildID, baseArgs)
+	args := BuildYtDlpArgs(guildID, baseArgs, "")
 
 	args = append(args, query)
 	cmd := exec.CommandContext(searchCtx, "yt-dlp", args...)
@@ -179,7 +179,7 @@ func getTrackInfoMany(ctx context.Context, guildID, query string) ([]SearchResul
 		"--no-playlist",
 	}
 
-	args := BuildYtDlpArgs(guildID, baseArgs)
+	args := BuildYtDlpArgs(guildID, baseArgs, "")
 	args = append(args, query)
 	
 	cmd := exec.CommandContext(searchCtx, "yt-dlp", args...)

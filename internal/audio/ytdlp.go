@@ -65,14 +65,16 @@ func InitYtDlpConfig(cookiesPath, jsRuntime string) {
 }
 
 // BuildYtDlpArgs constructs the arguments for yt-dlp including runtime and cookies.
-func BuildYtDlpArgs(guildID string, baseArgs []string) []string {
+func BuildYtDlpArgs(guildID string, baseArgs []string, playerClient string) []string {
 	args := append([]string(nil), baseArgs...)
 
 	// Always add ejs remote component to solve challenges
 	args = append(args, "--remote-components", "ejs:github")
 
-	// Use iOS player client to bypass YouTube web-based bot detection
-	args = append(args, "--extractor-args", "youtube:player_client=ios")
+	// Use specific player client if provided (to bypass YouTube web-based bot detection)
+	if playerClient != "" {
+		args = append(args, "--extractor-args", "youtube:player_client="+playerClient)
+	}
 
 	// Set JS runtime
 	args = append(args, "--js-runtimes", ytdlpJSRuntimePath)

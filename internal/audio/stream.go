@@ -13,6 +13,8 @@ import (
 	"github.com/jonas747/ogg"
 )
 
+var youtubePlayerClients = []string{"web", "android", "ios", "tv"}
+
 // opusFrameSize is the number of bytes in a 20ms PCM frame at 48kHz stereo 16-bit.
 // 48000 samples/sec * 2 channels * 2 bytes/sample * 0.020 sec = 3840 bytes
 const opusFrameSize = 3840
@@ -91,32 +93,45 @@ func NewStream(guildID string, query string) (*StreamProvider, error) {
 		"--no-playlist",
 	}
 
-	args := BuildYtDlpArgs(guildID, baseArgs)
+	var downloadedFile string
+	var lastErr error
 
-	args = append(args, query)
-	ytCmd := exec.Command("yt-dlp", args...)
+	for i, client := range youtubePlayerClients {
+		log.Printf("[AFK-BOT] [%s] [AUDIO] Attempt %d/%d using player_client=%s", guildID, i+1, len(youtubePlayerClients), client)
 
-	log.Printf("[AFK-BOT] [%s] [AUDIO] Downloading audio file...", guildID)
-	out, err := ytCmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("failed to download audio: %w, output: %s", err, string(out))
+		args := BuildYtDlpArgs(guildID, baseArgs, client)
+		args = append(args, query)
+
+		ytCmd := exec.Command("yt-dlp", args...)
+		out, err := ytCmd.CombinedOutput()
+
+		if err == nil {
+			// Success! Find the file.
+			files, errGlob := filepath.Glob(tmpPrefix + ".*")
+			if errGlob == nil && len(files) > 0 {
+				downloadedFile = files[0]
+				stat, errStat := os.Stat(downloadedFile)
+				if errStat == nil && stat.Size() > 0 {
+					log.Printf("[AFK-BOT] [%s] [AUDIO] Successfully downloaded to %s (%d bytes) with player_client=%s", guildID, downloadedFile, stat.Size(), client)
+					lastErr = nil
+					break // Break out of the client loop
+				}
+			}
+			lastErr = fmt.Errorf("download succeeded but file was missing or empty")
+			log.Printf("[AFK-BOT] [%s] [AUDIO] player_client=%s failed: %v", guildID, client, lastErr)
+		} else {
+			lastErr = fmt.Errorf("player_client=%s failed: %w, output: %s", client, err, string(out))
+			log.Printf("[AFK-BOT] [%s] [AUDIO] player_client=%s failed: %v", guildID, client, err)
+		}
+
+		if i < len(youtubePlayerClients)-1 {
+			time.Sleep(1500 * time.Millisecond)
+		}
 	}
 
-	// yt-dlp appends the format extension automatically, so we must search for the file
-	files, err := filepath.Glob(tmpPrefix + ".*")
-	if err != nil || len(files) == 0 {
-		return nil, fmt.Errorf("downloaded file not found after yt-dlp success")
+	if lastErr != nil {
+		return nil, fmt.Errorf("all player clients failed, last error: %w", lastErr)
 	}
-
-	downloadedFile := files[0]
-
-	// Verify the file has content
-	stat, err := os.Stat(downloadedFile)
-	if err != nil || stat.Size() == 0 {
-		os.Remove(downloadedFile)
-		return nil, fmt.Errorf("downloaded file is empty or unreadable")
-	}
-	log.Printf("[AFK-BOT] [%s] [AUDIO] Successfully downloaded to %s (%d bytes)", guildID, downloadedFile, stat.Size())
 
 	// Step 2: Start ffmpeg to output OGG/Opus format for Discord
 	// Discord requires: Opus codec, 48kHz, stereo
