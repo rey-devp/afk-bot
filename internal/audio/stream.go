@@ -184,11 +184,3 @@ func NewStream(query string) (*StreamProvider, error) {
 	log.Println("[AUDIO] Stream pipeline ready!")
 	return provider, nil
 }
-
-func NewOpusStream(query string) (*StreamProvider, error) {
-	return NewStream(query)
-}
-
-func (p *StreamProvider) DoneChan() <-chan error {
-	return p.done
-}
