@@ -65,8 +65,11 @@ func InitYtDlpConfig(cookiesPath, jsRuntime string) {
 		log.Printf("[AFK-BOT] [STARTUP-INFO] JS Runtime '%s' detected at: %s", runtimeBinary, path)
 	}
 
-	// 3. Startup check for PO Token Provider
+	// 3. Startup check for PO Token Provider server
 	go checkPOTokenProvider()
+
+	// 4. Startup check for yt-dlp PO Token Plugin
+	go checkPOTokenPlugin()
 }
 
 func checkPOTokenProvider() {
@@ -81,6 +84,23 @@ func checkPOTokenProvider() {
 	}
 	defer resp.Body.Close()
 	log.Printf("[AFK-BOT] [STARTUP-INFO] PO Token provider reachable at 127.0.0.1:4416")
+}
+
+func checkPOTokenPlugin() {
+	cmd := exec.Command("yt-dlp", "-v", "--simulate", "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+	output, _ := cmd.CombinedOutput()
+	outputStr := string(output)
+
+	if strings.Contains(outputStr, "PO Token Providers") {
+		// Cari baris yang mengandung info ini untuk di-log
+		for _, line := range strings.Split(outputStr, "\n") {
+			if strings.Contains(line, "PO Token Providers") {
+				log.Printf("[AFK-BOT] [STARTUP-INFO] %s", strings.TrimSpace(line))
+			}
+		}
+	} else {
+		log.Printf("[AFK-BOT] [STARTUP-WARNING] yt-dlp verbose output does NOT mention PO Token Providers — plugin may not be installed or not detected")
+	}
 }
 
 // BuildYtDlpArgs constructs the arguments for yt-dlp including runtime and cookies.
